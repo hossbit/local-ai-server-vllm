@@ -1,0 +1,15 @@
+# Runtime state when the project is run from a checkout with LOCALVLLM_DIR=.
+/conf/backends/
+/conf/backends.d/
+/conf/localvllm.conf
+/conf/.localvllm.lock
+/conf/.localvllm-config.sha256
+/hf-cache/
+/logs/
+/models/
+/venv/
+*.pid
+*.pid.start
+*.log
+__pycache__/
+.pytest_cache/

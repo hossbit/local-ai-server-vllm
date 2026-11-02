@@ -1,0 +1,659 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2153,SC2317
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ -f "$SCRIPT_DIR/../conf/localvllm.conf" ]; then
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/../conf/localvllm.conf"
+elif [ -f "$SCRIPT_DIR/localvllm.conf" ]; then
+  # shellcheck source=localvllm.conf
+  . "$SCRIPT_DIR/localvllm.conf"
+else
+  echo "Error: localvllm.conf not found." >&2
+  exit 1
+fi
+
+source_localvllm_common() {
+  local candidate
+
+  for candidate in "$SCRIPT_DIR/lib/common.sh" "$SCRIPT_DIR/../lib/common.sh"; do
+    if [ -f "$candidate" ]; then
+      # shellcheck source=/dev/null
+      . "$candidate"
+      return 0
+    fi
+  done
+
+  echo "Error: missing Local vLLM library: common.sh" >&2
+  exit 1
+}
+source_localvllm_common
+source_localvllm_lib install.sh
+
+AI_DIR="$(resolve_ai_dir)"
+CONF_ROOT="$AI_DIR/$LOCALVLLM_CONF_SUBDIR"
+BIN_DIR="$AI_DIR/$LOCALVLLM_BIN_SUBDIR"
+LIB_DIR="$AI_DIR/$LOCALVLLM_LIB_SUBDIR"
+LOCALVLLM_SOURCE_DIR=""
+START_AFTER_UPDATE=1
+SCRIPTS_ONLY=0
+VLLM_ONLY=0
+UPDATE_BACKENDS=()
+TMP_DIR=""
+STAGED_UPDATER=""
+STAGED_CLI=""
+
+localvllm_capture_global_runtime
+localvllm_acquire_global_lock
+
+log() {
+  printf '\n==> %s\n' "$*"
+}
+
+warn() {
+  echo "Warning: $*" >&2
+}
+
+fail() {
+  echo "Error: $*" >&2
+  exit 1
+}
+
+have() {
+  command -v "$1" >/dev/null 2>&1
+}
+
+usage() {
+  cat <<EOF
+Usage: $0 [--no-start] [--backend NAME|all] [--scripts-only] [--vllm-only]
+
+Updates the Local vLLM manager and/or engine packages.
+
+Options:
+  --backend NAME   Update vllm, omni, or all (default: all installed)
+  --all            Same as --backend all
+  --no-start       Leave previously running services stopped
+  --scripts-only   Refresh helper scripts/config, do not upgrade packages
+  --vllm-only      Upgrade packages, do not refresh helper scripts
+  -h, --help       Show this help
+
+vLLM and vLLM-Omni use separate venvs. When pinning vLLM-Omni, keep
+VLLM_OMNI_VERSION on the same release line as VLLM_VERSION.
+EOF
+}
+
+add_backend() {
+  local requested="$1" name
+
+  if [ "$requested" = "all" ]; then
+    while IFS= read -r name; do
+      UPDATE_BACKENDS+=("$name")
+    done < <(localvllm_backend_list)
+    return 0
+  fi
+
+  name="$(localvllm_backend_name "$requested")" ||
+    fail "unknown backend: $requested (use vllm, omni, or all)"
+  UPDATE_BACKENDS+=("$name")
+}
+
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --no-start) START_AFTER_UPDATE=0 ;;
+    --scripts-only) SCRIPTS_ONLY=1 ;;
+    --vllm-only) VLLM_ONLY=1 ;;
+    --backend)
+      [ "$#" -ge 2 ] || fail "missing name after --backend"
+      add_backend "$2"
+      shift
+      ;;
+    --backend=*) add_backend "${1#--backend=}" ;;
+    --all) add_backend all ;;
+    -h|--help) usage; exit 0 ;;
+    *) usage >&2; exit 2 ;;
+  esac
+  shift
+done
+
+if [ "$SCRIPTS_ONLY" -eq 1 ] && [ "$VLLM_ONLY" -eq 1 ]; then
+  fail "--scripts-only and --vllm-only cannot be combined"
+fi
+
+if [ "${#UPDATE_BACKENDS[@]}" -eq 0 ]; then
+  add_backend all
+fi
+
+declare -A SEEN=()
+UNIQUE=()
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  [ -n "${SEEN[$BACKEND]+x}" ] && continue
+  SEEN["$BACKEND"]=1
+  UNIQUE+=("$BACKEND")
+done
+UPDATE_BACKENDS=("${UNIQUE[@]}")
+
+has_user_service() {
+  command -v systemctl >/dev/null 2>&1 &&
+    systemctl --user cat "$LOCALVLLM_SERVICE_NAME" >/dev/null 2>&1
+}
+
+service_is_active() {
+  if has_user_service && systemctl --user is-active --quiet "${LOCALVLLM_SERVICE_NAME%.service}" 2>/dev/null; then
+    return 0
+  fi
+  pid_file_matches_process "$PID_FILE" "$PID_START_FILE"
+}
+
+stop_localvllm() {
+  if has_user_service; then
+    log "Stopping $LOCALVLLM_BACKEND_LABEL service"
+    if ! systemctl --user stop "$LOCALVLLM_SERVICE_NAME"; then
+      warn "could not stop $LOCALVLLM_SERVICE_NAME"
+      return 1
+    fi
+  elif [ -x "$BIN_DIR/stop.sh" ]; then
+    log "Stopping $LOCALVLLM_BACKEND_LABEL"
+    if ! "$BIN_DIR/stop.sh" "$LOCALVLLM_BACKEND"; then
+      warn "could not stop $LOCALVLLM_BACKEND_LABEL"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+start_localvllm() {
+  if has_user_service; then
+    log "Starting $LOCALVLLM_BACKEND_LABEL service"
+    if ! systemctl --user start "$LOCALVLLM_SERVICE_NAME"; then
+      warn "could not start $LOCALVLLM_SERVICE_NAME"
+      return 1
+    fi
+  elif [ -x "$BIN_DIR/start.sh" ]; then
+    log "Starting $LOCALVLLM_BACKEND_LABEL"
+    if ! "$BIN_DIR/start.sh" "$LOCALVLLM_BACKEND"; then
+      warn "could not start $LOCALVLLM_BACKEND_LABEL"
+      return 1
+    fi
+  fi
+  return 0
+}
+
+localvllm_archive_url() {
+  case "${LOCALVLLM_REF:-main}" in
+    v*|refs/tags/*)
+      printf '%s/refs/tags/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF#refs/tags/}"
+      ;;
+    refs/heads/*)
+      printf '%s/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "$LOCALVLLM_REF"
+      ;;
+    *)
+      printf '%s/refs/heads/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF:-main}"
+      ;;
+  esac
+}
+
+resolve_localvllm_source_dir() {
+  local archive_file extracted
+
+  if [ -f "$SCRIPT_DIR/install-localvllm.sh" ] && [ -f "$SCRIPT_DIR/localvllm.conf" ]; then
+    LOCALVLLM_SOURCE_DIR="$SCRIPT_DIR"
+    return 0
+  fi
+
+  if [ -n "${LOCALVLLM_LOCAL_SOURCE_DIR:-}" ]; then
+    LOCALVLLM_SOURCE_DIR="$(expand_path "$LOCALVLLM_LOCAL_SOURCE_DIR")"
+    if [ ! -f "$LOCALVLLM_SOURCE_DIR/install-localvllm.sh" ] || [ ! -f "$LOCALVLLM_SOURCE_DIR/localvllm.conf" ]; then
+      fail "LOCALVLLM_LOCAL_SOURCE_DIR=$LOCALVLLM_SOURCE_DIR is not a Local vLLM checkout"
+    fi
+    log "Using local Local vLLM checkout: $LOCALVLLM_SOURCE_DIR"
+    return 0
+  fi
+
+  log "Fetching Local vLLM helper scripts"
+  LOCALVLLM_SOURCE_DIR="$TMP_DIR/localvllm-source"
+
+  if have git; then
+    git clone --depth 1 --branch "${LOCALVLLM_REF:-main}" \
+      "${LOCALVLLM_REPO_URL:-https://github.com/hossbit/local-ai-server-vllm.git}" \
+      "$LOCALVLLM_SOURCE_DIR"
+  else
+    archive_file="$TMP_DIR/localvllm.tar.gz"
+    curl -4 -fsSL "$(localvllm_archive_url)" -o "$archive_file"
+    tar -xzf "$archive_file" -C "$TMP_DIR"
+    extracted="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r dir; do
+      [ -f "$dir/install-localvllm.sh" ] && { printf '%s\n' "$dir"; break; }
+    done)"
+    [ -n "$extracted" ] || fail "could not find the extracted Local vLLM source directory"
+    mv "$extracted" "$LOCALVLLM_SOURCE_DIR"
+  fi
+
+  [ -f "$LOCALVLLM_SOURCE_DIR/localvllm.conf" ] || fail "downloaded Local vLLM source is missing localvllm.conf"
+  [ -x "$LOCALVLLM_SOURCE_DIR/localvllm" ] || fail "downloaded Local vLLM source is missing the localvllm CLI"
+}
+
+refresh_scripts() (
+  set -e
+  local previous_conf backup
+
+  if [ "$LOCALVLLM_SOURCE_DIR" = "$AI_DIR" ]; then
+    return 1
+  fi
+
+  backup="$TMP_DIR/refresh-backup"
+  rm -rf "$backup"
+  mkdir -p "$backup"
+  [ -d "$BIN_DIR" ] && cp -a "$BIN_DIR" "$backup/bin"
+  [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$backup/lib"
+  [ -f "$CONF_ROOT/localvllm.conf" ] && cp "$CONF_ROOT/localvllm.conf" "$backup/localvllm.conf"
+
+  restore_refresh_backup() {
+    if [ -d "$backup/bin" ]; then
+      rm -rf "$BIN_DIR"
+      cp -a "$backup/bin" "$BIN_DIR"
+    fi
+    if [ -d "$backup/lib" ]; then
+      rm -rf "$LIB_DIR"
+      cp -a "$backup/lib" "$LIB_DIR"
+    fi
+    if [ -f "$backup/localvllm.conf" ]; then
+      cp "$backup/localvllm.conf" "$CONF_ROOT/localvllm.conf"
+    fi
+  }
+  trap restore_refresh_backup ERR
+
+  log "Refreshing helper scripts"
+
+  for SCRIPT in localvllm start.sh stop.sh rebuild-config.sh update-localvllm.sh uninstall-localvllm.sh install-localvllm.sh; do
+    [ -f "$LOCALVLLM_SOURCE_DIR/$SCRIPT" ] || continue
+    case "$SCRIPT" in
+      localvllm)
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/localvllm.staged"
+        ;;
+      update-localvllm.sh)
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/update-localvllm.staged"
+        ;;
+      *)
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$BIN_DIR/$SCRIPT"
+        ;;
+    esac
+  done
+
+  previous_conf="$CONF_ROOT/localvllm.conf"
+  if [ -f "$previous_conf" ]; then
+    cp "$previous_conf" "$LIB_DIR/localvllm.conf.previous"
+    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf"
+    append_runtime_tuning "$LIB_DIR/localvllm.conf.previous" "updater"
+    rm -f "$LIB_DIR/localvllm.conf.previous"
+  else
+    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf"
+  fi
+  write_config_marker "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT"
+
+  if [ -d "$LOCALVLLM_SOURCE_DIR/lib" ]; then
+    mkdir -p "$LIB_DIR"
+    while IFS= read -r path; do
+      rel="${path#"$LOCALVLLM_SOURCE_DIR/lib/"}"
+      mkdir -p "$LIB_DIR/$(dirname "$rel")"
+      install -m644 "$path" "$LIB_DIR/$rel"
+    done < <(find "$LOCALVLLM_SOURCE_DIR/lib" -type f | sort)
+  fi
+
+  for BACKEND in $(localvllm_backend_list); do
+    write_backend_profile "$CONF_ROOT" "$BACKEND"
+  done
+
+  if [ -x "$BIN_DIR/localvllm" ]; then
+    mkdir -p "$LOCALVLLM_USER_BIN_DIR"
+    ln -sfn "$BIN_DIR/localvllm" "$LOCALVLLM_USER_BIN_DIR/$LOCALVLLM_CLI_NAME"
+  fi
+
+  for BACKEND in $(localvllm_backend_list); do
+    localvllm_use_backend "$BACKEND" || continue
+    if localvllm_backend_installed "$BACKEND"; then
+      mkdir -p "$LOCALVLLM_SYSTEMD_USER_DIR"
+      write_systemd_user_service "$SERVICE_FILE" "$BIN_DIR" "$BACKEND"
+    fi
+  done
+
+  systemctl --user daemon-reload >/dev/null 2>&1 || true
+  return 0
+)
+
+commit_staged_helpers() {
+  if [ -n "$STAGED_CLI" ] && [ -f "$STAGED_CLI" ]; then
+    install -m755 "$STAGED_CLI" "$BIN_DIR/localvllm"
+    mkdir -p "$LOCALVLLM_USER_BIN_DIR"
+    ln -sfn "$BIN_DIR/localvllm" "$LOCALVLLM_USER_BIN_DIR/$LOCALVLLM_CLI_NAME"
+  fi
+  if [ -n "$STAGED_UPDATER" ] && [ -f "$STAGED_UPDATER" ]; then
+    install -m755 "$STAGED_UPDATER" "$BIN_DIR/update-localvllm.sh"
+  fi
+}
+
+LATEST_VLLM=""
+LATEST_OMNI=""
+
+target_version() {
+  local var="$1"
+  local latest_kind="$2"
+  local value="${!var}"
+
+  if [ "$value" != "latest" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  if [ "$latest_kind" = "vllm" ]; then
+    if [ -z "$LATEST_VLLM" ]; then
+      LATEST_VLLM="$(vllm_latest_version 2>/dev/null)" || return 1
+    fi
+    printf '%s\n' "$LATEST_VLLM"
+  else
+    if [ -z "$LATEST_OMNI" ]; then
+      LATEST_OMNI="$(vllm_omni_latest_version 2>/dev/null)" || return 1
+    fi
+    printf '%s\n' "$LATEST_OMNI"
+  fi
+}
+
+# package_need_for_backend NAME -> prints vllm, omni, both, or none.
+package_need_for_backend() {
+  local backend="$1"
+  local installed_vllm installed_omni target_vllm target_omni need=""
+
+  localvllm_use_backend "$backend" || return 1
+  localvllm_backend_installed "$backend" || { printf 'none\n'; return 0; }
+
+  installed_vllm="$(vllm_installed_version "$VENV_DIR")"
+  installed_omni="$(vllm_omni_installed_version "$VENV_DIR")"
+
+  if [ "$backend" = "vllm" ]; then
+    if target_vllm="$(target_version VLLM_VERSION vllm)"; then
+      if [ -n "$target_vllm" ] && ! versions_match "$target_vllm" "$installed_vllm"; then
+        need=vllm
+      fi
+    else
+      warn "could not check PyPI for the latest vLLM version; keeping the installed version"
+    fi
+  else
+    if target_omni="$(target_version VLLM_OMNI_VERSION omni)"; then
+      if [ -n "$target_omni" ] && ! versions_match "$target_omni" "$installed_omni"; then
+        need=omni
+      fi
+    else
+      warn "could not check PyPI for the latest vLLM-Omni version; keeping the installed version"
+    fi
+
+    # When vLLM itself is pinned, honor the pin for the omni venv too. When it
+    # is "latest", let vllm-omni resolve its matching vLLM dependency.
+    if [ "${VLLM_VERSION:-latest}" != "latest" ] && ! versions_match "$VLLM_VERSION" "$installed_vllm"; then
+      need="${need:+$need,}vllm"
+    fi
+  fi
+
+  printf '%s\n' "${need:-none}"
+}
+
+declare -A OLD_VENVS=()
+
+update_backend_package() {
+  local backend="$1"
+  local need="$2"
+  local pip_log="$AI_DIR/$LOCALVLLM_LOGS_SUBDIR/pip-install-$backend.log"
+  local stage_venv old_venv=""
+
+  [ "$need" = "none" ] && return 0
+  localvllm_use_backend "$backend" || return 1
+
+  mkdir -p "$(dirname "$pip_log")"
+  : >> "$pip_log"
+
+  stage_venv="$(vllm_venv_stage_update "$VENV_DIR")" || {
+    echo "Error: could not stage an update of $VENV_DIR." >&2
+    return 1
+  }
+
+  if ! vllm_bootstrap_pip "$stage_venv" "$pip_log"; then
+    rm -rf "$stage_venv"
+    return 1
+  fi
+
+  if [ "$backend" = "omni" ]; then
+    log "Upgrading vLLM + vLLM-Omni for $backend in one resolver transaction"
+    if ! vllm_pip_install_both "$stage_venv" "$VLLM_VERSION" "$VLLM_OMNI_VERSION" \
+      "$VLLM_OMNI_EXTRAS" "$VLLM_PIP_ARGS" \
+      "${VLLM_OMNI_PIP_ARGS:-$VLLM_PIP_ARGS}" "$pip_log"; then
+      rm -rf "$stage_venv"
+      return 1
+    fi
+  else
+    log "Upgrading vLLM for $backend"
+    if ! vllm_pip_install "$stage_venv" "$VLLM_VERSION" "$VLLM_PIP_ARGS" "$pip_log"; then
+      rm -rf "$stage_venv"
+      return 1
+    fi
+  fi
+
+  if ! vllm_verify_install "$stage_venv" >/dev/null; then
+    echo "Error: vLLM verification failed for backend $backend." >&2
+    rm -rf "$stage_venv"
+    return 1
+  fi
+  if [ "$backend" = "omni" ] && ! vllm_omni_verify_install "$stage_venv" >/dev/null; then
+    echo "Error: vLLM-Omni verification failed for backend $backend; keep vLLM and vLLM-Omni on matching release lines." >&2
+    rm -rf "$stage_venv"
+    return 1
+  fi
+  if ! vllm_pip_check "$stage_venv"; then
+    echo "Error: pip check failed for backend $backend; refusing an inconsistent environment." >&2
+    rm -rf "$stage_venv"
+    return 1
+  fi
+
+  old_venv="$(vllm_venv_commit_update "$VENV_DIR" "$stage_venv")" || {
+    echo "Error: could not install the new environment for backend $backend." >&2
+    return 1
+  }
+  OLD_VENVS["$backend"]="$old_venv"
+  write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$backend"
+  return 0
+}
+
+print_versions() {
+  local backend version
+
+  echo
+  echo "Current versions:"
+  for backend in $(localvllm_backend_list); do
+    localvllm_use_backend "$backend" || continue
+    version="$(vllm_installed_version "$VENV_DIR")"
+    echo "  $backend: vLLM ${version:-not installed}"
+    if [ "$backend" = "omni" ]; then
+      version="$(vllm_omni_installed_version "$VENV_DIR")"
+      echo "  $backend: vLLM-Omni ${version:-not installed}"
+    fi
+  done
+}
+
+###############################################################################
+# REQUIREMENTS AND SOURCE
+###############################################################################
+
+for COMMAND in curl jq tar; do
+  command -v "$COMMAND" >/dev/null 2>&1 || fail "required command not found: $COMMAND"
+done
+
+case "$(uname -m)" in
+  x86_64|aarch64|arm64) ;;
+  *) fail "unsupported architecture: $(uname -m)" ;;
+esac
+
+mkdir -p "$AI_DIR" "$BIN_DIR" "$LIB_DIR" "$CONF_ROOT"
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
+
+if [ "$VLLM_ONLY" -eq 0 ]; then
+  resolve_localvllm_source_dir
+fi
+
+###############################################################################
+# DECIDE WHAT NEEDS CHANGING
+###############################################################################
+
+declare -A NEED=()
+declare -A WAS_RUNNING=()
+ANY_PACKAGE_CHANGE=0
+ANY_BACKEND=0
+
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  localvllm_use_backend "$BACKEND" || continue
+  if ! localvllm_backend_installed "$BACKEND"; then
+    warn "backend '$BACKEND' is not installed; skipping (use: localvllm backend install $BACKEND)"
+    continue
+  fi
+  ANY_BACKEND=1
+  if service_is_active; then
+    WAS_RUNNING["$BACKEND"]=1
+  fi
+  if [ "$SCRIPTS_ONLY" -eq 1 ]; then
+    NEED["$BACKEND"]="none"
+  else
+    NEED["$BACKEND"]="$(package_need_for_backend "$BACKEND")"
+    [ "${NEED[$BACKEND]}" = "none" ] || ANY_PACKAGE_CHANGE=1
+  fi
+done
+
+if [ "$ANY_BACKEND" -eq 0 ]; then
+  fail "no installed backends matched the request. Install one with: localvllm backend install vllm"
+fi
+
+SCRIPTS_CHANGE=0
+if [ "$VLLM_ONLY" -eq 0 ] &&
+  localvllm_source_changed "$LOCALVLLM_SOURCE_DIR" "$CONF_ROOT"; then
+  SCRIPTS_CHANGE=1
+fi
+
+if [ "$SCRIPTS_CHANGE" -eq 0 ] && [ "$ANY_PACKAGE_CHANGE" -eq 0 ]; then
+  log "Everything is already up to date"
+  print_versions
+  exit 0
+fi
+
+###############################################################################
+# STOP RUNNING SERVICES
+###############################################################################
+
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
+  localvllm_use_backend "$BACKEND" || continue
+  if ! stop_localvllm; then
+    echo "Error: could not stop $BACKEND; refusing to modify its environment." >&2
+    # Bring any already-stopped backends back before leaving.
+    for OTHER in "${UPDATE_BACKENDS[@]}"; do
+      [ -n "${WAS_RUNNING[$OTHER]+x}" ] || continue
+      localvllm_use_backend "$OTHER" || continue
+      localvllm_service_is_active || start_localvllm || true
+    done
+    exit 1
+  fi
+done
+
+###############################################################################
+# REFRESH SCRIPTS AND UPGRADE PACKAGES
+###############################################################################
+
+if [ "$SCRIPTS_CHANGE" -eq 1 ]; then
+  STAGED_CLI="$TMP_DIR/localvllm.staged"
+  STAGED_UPDATER="$TMP_DIR/update-localvllm.staged"
+  if ! refresh_scripts; then
+    echo "Error: helper script refresh failed; restarting the previous services." >&2
+    for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+      [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
+      localvllm_use_backend "$BACKEND" || continue
+      localvllm_service_is_active || start_localvllm || true
+    done
+    exit 1
+  fi
+fi
+
+if [ "$SCRIPTS_ONLY" -eq 0 ]; then
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    need="${NEED[$BACKEND]:-none}"
+    [ "$need" = "none" ] && continue
+    if ! update_backend_package "$BACKEND" "$need"; then
+      echo "Error: package update failed for $BACKEND; restoring previous environments." >&2
+      for OTHER in "${UPDATE_BACKENDS[@]}"; do
+        localvllm_use_backend "$OTHER" || continue
+        if [ -n "${OLD_VENVS[$OTHER]:-}" ]; then
+          vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$OTHER]}" || true
+          OLD_VENVS["$OTHER"]=""
+        fi
+        if [ -n "${WAS_RUNNING[$OTHER]+x}" ]; then
+          localvllm_service_is_active || start_localvllm || true
+        fi
+      done
+      exit 1
+    fi
+  done
+fi
+
+###############################################################################
+# REBUILD LAUNCHERS
+###############################################################################
+
+if [ "$SCRIPTS_CHANGE" -eq 1 ] || [ "$ANY_PACKAGE_CHANGE" -eq 1 ]; then
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    localvllm_use_backend "$BACKEND" || continue
+    if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" >/dev/null 2>&1; then
+      "$BIN_DIR/rebuild-config.sh" --backend "$BACKEND" >/dev/null ||
+        warn "could not rebuild the $BACKEND launcher; run localvllm --backend $BACKEND reload"
+    fi
+  done
+fi
+
+###############################################################################
+# RESTART SERVICES THAT WERE RUNNING
+###############################################################################
+
+declare -A START_FAILED=()
+UPDATE_FAILED=0
+if [ "$START_AFTER_UPDATE" -eq 1 ]; then
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
+    localvllm_use_backend "$BACKEND" || continue
+    if ! start_localvllm; then
+      echo "Error: $BACKEND failed to start after the update." >&2
+      START_FAILED["$BACKEND"]=1
+      if [ -n "${OLD_VENVS[$BACKEND]:-}" ]; then
+        echo "Restoring the previous environment for $BACKEND..." >&2
+        vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$BACKEND]}" || true
+        OLD_VENVS["$BACKEND"]=""
+        start_localvllm || true
+      fi
+      UPDATE_FAILED=1
+    fi
+  done
+else
+  log "Services were left stopped (--no-start)"
+fi
+
+# A previous environment is only needed until its service has started. Keep it
+# for backends that failed to start, remove it for successful/not-running ones.
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  [ -n "${OLD_VENVS[$BACKEND]:-}" ] || continue
+  if [ -z "${START_FAILED[$BACKEND]+x}" ]; then
+    vllm_venv_finish_update "${OLD_VENVS[$BACKEND]}"
+    OLD_VENVS["$BACKEND"]=""
+  fi
+done
+
+if [ "$UPDATE_FAILED" -ne 0 ]; then
+  echo "Update completed with errors; inspect the output above." >&2
+  exit 1
+fi
+
+log "Local vLLM update completed"
+print_versions
+commit_staged_helpers

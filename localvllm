@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2034
+set -euo pipefail
+
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(cd "$(dirname "$SCRIPT_PATH")" && pwd)"
+
+if [ -f "$SCRIPT_DIR/../conf/localvllm.conf" ]; then
+  # shellcheck source=/dev/null
+  . "$SCRIPT_DIR/../conf/localvllm.conf"
+elif [ -f "$SCRIPT_DIR/localvllm.conf" ]; then
+  # shellcheck source=localvllm.conf
+  . "$SCRIPT_DIR/localvllm.conf"
+else
+  echo "Error: localvllm.conf not found." >&2
+  exit 1
+fi
+
+source_localvllm_cli_lib() {
+  local name="$1"
+  local candidate
+
+  for candidate in "$SCRIPT_DIR/lib/$name" "$SCRIPT_DIR/../lib/$name"; do
+    if [ -f "$candidate" ]; then
+      # shellcheck source=/dev/null
+      . "$candidate"
+      return 0
+    fi
+  done
+
+  if [[ "$name" == cli/* ]] && [ "${LOCALVLLM_CLI_LIB_REPAIR:-0}" != "1" ] && [ -x "$SCRIPT_DIR/update-localvllm.sh" ]; then
+    echo "Warning: missing Local vLLM CLI module $name; attempting repair with $SCRIPT_DIR/update-localvllm.sh --no-start --scripts-only" >&2
+    if LOCALVLLM_CLI_LIB_REPAIR=1 "$SCRIPT_DIR/update-localvllm.sh" --no-start --scripts-only >/dev/null; then
+      for candidate in "$SCRIPT_DIR/lib/$name" "$SCRIPT_DIR/../lib/$name"; do
+        if [ -f "$candidate" ]; then
+          # shellcheck source=/dev/null
+          . "$candidate"
+          return 0
+        fi
+      done
+    fi
+  fi
+
+  echo "Error: missing Local vLLM library: $name" >&2
+  if [[ "$name" == cli/* ]]; then
+    echo "Run the direct updater to repair the installed CLI modules:" >&2
+    echo "  $SCRIPT_DIR/update-localvllm.sh" >&2
+  fi
+  exit 1
+}
+
+source_localvllm_cli_lib common.sh
+
+AI_DIR="$(resolve_ai_dir)"
+CONF_ROOT="$AI_DIR/$LOCALVLLM_CONF_SUBDIR"
+BIN_DIR="$AI_DIR/$LOCALVLLM_BIN_SUBDIR"
+LIB_DIR="$AI_DIR/$LOCALVLLM_LIB_SUBDIR"
+LOCALVLLM_CLI_PATH="$BIN_DIR/$LOCALVLLM_CLI_NAME"
+LOCALVLLM_CLI_LINK="$LOCALVLLM_USER_BIN_DIR/$LOCALVLLM_CLI_NAME"
+
+localvllm_capture_global_runtime
+
+source_localvllm_cli_lib install.sh
+source_localvllm_cli_lib cli/core.sh
+source_localvllm_cli_lib cli/service.sh
+source_localvllm_cli_lib cli/models.sh
+source_localvllm_cli_lib cli/suggest.sh
+source_localvllm_cli_lib cli/lifecycle.sh
+source_localvllm_cli_lib cli/key.sh
+source_localvllm_cli_lib cli/backend.sh
+
+BACKEND_OVERRIDE=""
+LOCALVLLM_BACKEND_REQUESTED=0
+ARGS=()
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --backend|-b)
+      [ "$#" -ge 2 ] || fail "missing value for $1"
+      BACKEND_OVERRIDE="$2"
+      shift 2
+      ;;
+    --backend=*)
+      BACKEND_OVERRIDE="${1#--backend=}"
+      shift
+      ;;
+    *)
+      ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+set -- "${ARGS[@]}"
+
+COMMAND="${1:-help}"
+if [ "$#" -gt 0 ]; then
+  shift
+fi
+
+if [ -n "$BACKEND_OVERRIDE" ]; then
+  LOCALVLLM_BACKEND_REQUESTED=1
+  localvllm_use_backend "$BACKEND_OVERRIDE" || exit 1
+else
+  localvllm_use_backend "$LOCALVLLM_DEFAULT_BACKEND" || exit 1
+fi
+
+case "$COMMAND" in
+  start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
+    localvllm_acquire_global_lock
+    ;;
+esac
+
+case "$COMMAND" in
+  start|stop|restart)
+    service_cmd "$COMMAND" "$@"
+    ;;
+  reload)
+    reload_cmd "$@"
+    ;;
+  status)
+    status_cmd "$@"
+    ;;
+  check)
+    check_cmd "$@"
+    ;;
+  logs)
+    logs_cmd "$@"
+    ;;
+  metrics)
+    metrics_cmd "$@"
+    ;;
+  models)
+    models_cmd "$@"
+    ;;
+  use|switch)
+    use_cmd "$@"
+    ;;
+  load)
+    load_cmd "$@"
+    ;;
+  unload)
+    unload_cmd "$@"
+    ;;
+  ui)
+    ui_cmd "$@"
+    ;;
+  suggest)
+    suggest_cmd "$@"
+    ;;
+  key)
+    key_cmd "$@"
+    ;;
+  backend)
+    backend_cmd "$@"
+    ;;
+  doctor)
+    doctor_cmd "$@"
+    ;;
+  update)
+    update_cmd "$@"
+    ;;
+  version)
+    version_cmd "$@"
+    ;;
+  uninstall)
+    uninstall_cmd "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac
