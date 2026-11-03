@@ -834,7 +834,7 @@ localvllm_model_entries() {
         id_format["$id"]=hf
         id_path["$id"]="$path"
       else
-        gguf="$(find "$path" -maxdepth 1 -type f -name '*.gguf' -print -quit 2>/dev/null || true)"
+        gguf="$(find -L "$path" -maxdepth 1 -type f -name '*.gguf' -print -quit 2>/dev/null || true)"
         if [ -n "$gguf" ]; then
           id="$base"
           id_source["$id"]=local
@@ -845,7 +845,7 @@ localvllm_model_entries() {
           echo "Warning: model folder has weights but no config.json: $path" >&2
         fi
       fi
-    done < <(find "$models_dir" -mindepth 1 -maxdepth 1 -type d -print | sort)
+    done < <(find -L "$models_dir" -mindepth 1 -maxdepth 1 -type d -print | sort)
 
     while IFS= read -r path; do
       base="$(basename "$path")"
@@ -855,7 +855,7 @@ localvllm_model_entries() {
       id_model["$id"]="$path"
       id_format["$id"]=gguf
       id_path["$id"]="$path"
-    done < <(find "$models_dir" -mindepth 1 -maxdepth 1 -type f -name '*.gguf' -print | sort)
+    done < <(find -L "$models_dir" -mindepth 1 -maxdepth 1 -type f -name '*.gguf' -print | sort)
 
     # Hugging Face cache snapshots: hub/models--org--model/snapshots/<rev>.
     # This lets models downloaded by vLLM itself appear in `localvllm models`.
@@ -881,7 +881,7 @@ localvllm_model_entries() {
       id_model["$id"]="$snapshot"
       id_format["$id"]=hf
       id_path["$id"]="$snapshot"
-    done < <(find "$models_dir" -mindepth 4 -maxdepth 6 -type f -name config.json -path '*/snapshots/*' -print 2>/dev/null | sort)
+    done < <(find -L "$models_dir" -mindepth 4 -maxdepth 6 -type f -name config.json -path '*/snapshots/*' -print 2>/dev/null | sort)
   fi
 
   if [ -n "$overrides_dir" ] && [ -d "$overrides_dir" ]; then

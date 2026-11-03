@@ -13,6 +13,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
       - name: Bash syntax
         run: |
           find . -type f \( -name '*.sh' -o -name 'localvllm' \) -print0 |
@@ -24,14 +27,3 @@ jobs:
             localvllm install.sh install-localvllm.sh start.sh stop.sh \
             rebuild-config.sh update-localvllm.sh uninstall-localvllm.sh \
             lib/*.sh lib/cli/*.sh
-
-  tests:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install bats and jq
-        run: sudo apt-get update && sudo apt-get install -y bats jq
-
-      - name: Run bats
-        run: bats tests

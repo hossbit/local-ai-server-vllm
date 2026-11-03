@@ -235,19 +235,29 @@ resolve_localvllm_source_dir() {
 
 refresh_scripts() (
   set -e
-  local previous_conf backup
+  local previous_conf backup refresh_status
 
   if [ "$LOCALVLLM_SOURCE_DIR" = "$AI_DIR" ]; then
     return 1
   fi
 
   backup="$TMP_DIR/refresh-backup"
-  rm -rf "$backup"
-  mkdir -p "$backup"
-  [ -d "$BIN_DIR" ] && cp -a "$BIN_DIR" "$backup/bin"
-  [ -d "$LIB_DIR" ] && cp -a "$LIB_DIR" "$backup/lib"
-  [ -f "$CONF_ROOT/localvllm.conf" ] && cp "$CONF_ROOT/localvllm.conf" "$backup/localvllm.conf"
+  rm -rf "$backup" || return 1
+  mkdir -p "$backup" || return 1
+  if [ -d "$BIN_DIR" ]; then
+    cp -a "$BIN_DIR" "$backup/bin" || return 1
+  fi
+  if [ -d "$LIB_DIR" ]; then
+    cp -a "$LIB_DIR" "$backup/lib" || return 1
+  fi
+  if [ -f "$CONF_ROOT/localvllm.conf" ]; then
+    cp "$CONF_ROOT/localvllm.conf" "$backup/localvllm.conf" || return 1
+  fi
+  if [ -f "$CONF_ROOT/.localvllm-config.sha256" ]; then
+    cp "$CONF_ROOT/.localvllm-config.sha256" "$backup/config.sha256" || return 1
+  fi
 
+  # shellcheck disable=SC2329 # Invoked by the EXIT trap.
   restore_refresh_backup() {
     if [ -d "$backup/bin" ]; then
       rm -rf "$BIN_DIR"
@@ -260,8 +270,15 @@ refresh_scripts() (
     if [ -f "$backup/localvllm.conf" ]; then
       cp "$backup/localvllm.conf" "$CONF_ROOT/localvllm.conf"
     fi
+    if [ -f "$backup/config.sha256" ]; then
+      cp "$backup/config.sha256" "$CONF_ROOT/.localvllm-config.sha256"
+    else
+      rm -f "$CONF_ROOT/.localvllm-config.sha256"
+    fi
   }
-  trap restore_refresh_backup ERR
+  # An ERR trap is suppressed when this function is tested with `if !`.
+  # Explicit checks below return failure; EXIT restores the backup on failure.
+  trap 'refresh_status=$?; if [ "$refresh_status" -ne 0 ]; then restore_refresh_backup; fi' EXIT
 
   log "Refreshing helper scripts"
 
@@ -269,51 +286,51 @@ refresh_scripts() (
     [ -f "$LOCALVLLM_SOURCE_DIR/$SCRIPT" ] || continue
     case "$SCRIPT" in
       localvllm)
-        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/localvllm.staged"
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/localvllm.staged" || return 1
         ;;
       update-localvllm.sh)
-        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/update-localvllm.staged"
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$TMP_DIR/update-localvllm.staged" || return 1
         ;;
       *)
-        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$BIN_DIR/$SCRIPT"
+        install -m755 "$LOCALVLLM_SOURCE_DIR/$SCRIPT" "$BIN_DIR/$SCRIPT" || return 1
         ;;
     esac
   done
 
   previous_conf="$CONF_ROOT/localvllm.conf"
   if [ -f "$previous_conf" ]; then
-    cp "$previous_conf" "$LIB_DIR/localvllm.conf.previous"
-    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf"
-    append_runtime_tuning "$LIB_DIR/localvllm.conf.previous" "updater"
-    rm -f "$LIB_DIR/localvllm.conf.previous"
+    cp "$previous_conf" "$LIB_DIR/localvllm.conf.previous" || return 1
+    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf" || return 1
+    append_runtime_tuning "$LIB_DIR/localvllm.conf.previous" "updater" || return 1
+    rm -f "$LIB_DIR/localvllm.conf.previous" || return 1
   else
-    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf"
+    install -m600 "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT/localvllm.conf" || return 1
   fi
-  write_config_marker "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT"
+  write_config_marker "$LOCALVLLM_SOURCE_DIR/localvllm.conf" "$CONF_ROOT" || return 1
 
   if [ -d "$LOCALVLLM_SOURCE_DIR/lib" ]; then
-    mkdir -p "$LIB_DIR"
+    mkdir -p "$LIB_DIR" || return 1
     while IFS= read -r path; do
       rel="${path#"$LOCALVLLM_SOURCE_DIR/lib/"}"
-      mkdir -p "$LIB_DIR/$(dirname "$rel")"
-      install -m644 "$path" "$LIB_DIR/$rel"
+      mkdir -p "$LIB_DIR/$(dirname "$rel")" || return 1
+      install -m644 "$path" "$LIB_DIR/$rel" || return 1
     done < <(find "$LOCALVLLM_SOURCE_DIR/lib" -type f | sort)
   fi
 
   for BACKEND in $(localvllm_backend_list); do
-    write_backend_profile "$CONF_ROOT" "$BACKEND"
+    write_backend_profile "$CONF_ROOT" "$BACKEND" || return 1
   done
 
   if [ -x "$BIN_DIR/localvllm" ]; then
-    mkdir -p "$LOCALVLLM_USER_BIN_DIR"
-    ln -sfn "$BIN_DIR/localvllm" "$LOCALVLLM_USER_BIN_DIR/$LOCALVLLM_CLI_NAME"
+    mkdir -p "$LOCALVLLM_USER_BIN_DIR" || return 1
+    ln -sfn "$BIN_DIR/localvllm" "$LOCALVLLM_USER_BIN_DIR/$LOCALVLLM_CLI_NAME" || return 1
   fi
 
   for BACKEND in $(localvllm_backend_list); do
     localvllm_use_backend "$BACKEND" || continue
     if localvllm_backend_installed "$BACKEND"; then
-      mkdir -p "$LOCALVLLM_SYSTEMD_USER_DIR"
-      write_systemd_user_service "$SERVICE_FILE" "$BIN_DIR" "$BACKEND"
+      mkdir -p "$LOCALVLLM_SYSTEMD_USER_DIR" || return 1
+      write_systemd_user_service "$SERVICE_FILE" "$BIN_DIR" "$BACKEND" || return 1
     fi
   done
 

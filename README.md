@@ -101,7 +101,7 @@ unless changed with `localvllm backend default omni`).
 - A single `localvllm` CLI for start/stop, models, keys, doctor, update, uninstall
 - Hardware-aware setting suggestions and a small live benchmark
 - Optional vLLM sleep mode for releasing VRAM without stopping the process
-- Atomic launcher generation and transactional `use` / key changes
+- Atomic launcher generation and transactional `use`; guarded, locked key changes
 - A global operation lock that prevents concurrent install/update/start/stop races
 - Staged virtualenv upgrades with verification, `pip check`, and rollback
 - Rotated per-backend logs instead of truncating the previous failure
@@ -270,7 +270,7 @@ engine; this project intentionally does not pretend otherwise.
 | `localvllm backend install NAME` | Install/repair one backend. |
 | `localvllm backend default NAME` | Change the default backend. |
 | `localvllm doctor [--json] [BACKEND\|all]` | Diagnose Python, vLLM, GPU, model, port, keys, pip consistency. |
-| `localvllm update [--backend NAME\|all]` | Update packages and helper scripts. |
+| `localvllm update [--backend NAME] [--all]` | Update packages and helper scripts. |
 | `localvllm version [BACKEND\|all]` | Show versions and active models. |
 | `localvllm uninstall` | Remove both backends; models are kept by default. |
 

@@ -407,6 +407,26 @@ vllm_venv_commit_update() {
   local stage="$2"
   local old="$venv.previous.$$"
 
+  # pip generates entry points with the staging interpreter's absolute path.
+  # Rewrite them before promotion, while that interpreter still exists.
+  if ! "$stage/bin/python" - "$stage" "$venv" <<'PYTHON'
+import os
+import pathlib
+import sys
+
+stage, destination = map(os.fsencode, sys.argv[1:])
+for path in (pathlib.Path(sys.argv[1]) / "bin").iterdir():
+    if path.is_symlink() or not path.is_file():
+        continue
+    content = path.read_bytes()
+    if b"\0" not in content and stage in content:
+        path.write_bytes(content.replace(stage, destination))
+PYTHON
+  then
+    rm -rf "$stage"
+    return 1
+  fi
+
   rm -rf "$old"
   if ! mv "$venv" "$old"; then
     rm -rf "$stage"
@@ -464,12 +484,12 @@ vllm_pip_install() {
   local version="$2"
   local pip_args="${3:-}"
   local log_file="${4:-}"
-  local pip="$venv/bin/pip"
+  local python="$venv/bin/python"
   local -a pip_extra=()
-  local -a command=("$pip" install --upgrade)
+  local -a command=("$python" -m pip install --upgrade)
 
-  if [ ! -x "$pip" ]; then
-    echo "Error: pip is missing from $venv." >&2
+  if [ ! -x "$python" ]; then
+    echo "Error: Python is missing from $venv." >&2
     return 1
   fi
 
@@ -506,14 +526,14 @@ vllm_pip_install_both() {
   local vllm_pip_args="${5:-}"
   local omni_pip_args="${6:-}"
   local log_file="${7:-}"
-  local pip="$venv/bin/pip"
+  local python="$venv/bin/python"
   local omni_spec
   local -a vllm_extra=()
   local -a omni_extra=()
-  local -a command=("$pip" install --upgrade)
+  local -a command=("$python" -m pip install --upgrade)
 
-  if [ ! -x "$pip" ]; then
-    echo "Error: pip is missing from $venv." >&2
+  if [ ! -x "$python" ]; then
+    echo "Error: Python is missing from $venv." >&2
     return 1
   fi
 
@@ -576,13 +596,13 @@ vllm_omni_pip_install() {
   local extras="${3:-}"
   local pip_args="${4:-}"
   local log_file="${5:-}"
-  local pip="$venv/bin/pip"
+  local python="$venv/bin/python"
   local -a pip_extra=()
-  local -a command=("$pip" install --upgrade)
+  local -a command=("$python" -m pip install --upgrade)
   local spec
 
-  if [ ! -x "$pip" ]; then
-    echo "Error: pip is missing from $venv." >&2
+  if [ ! -x "$python" ]; then
+    echo "Error: Python is missing from $venv." >&2
     return 1
   fi
 

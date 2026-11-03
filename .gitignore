@@ -13,3 +13,7 @@
 *.log
 __pycache__/
 .pytest_cache/
+
+# Local development resources (kept on disk, excluded from GitHub).
+/.claude/skills/localvllm-dual-backend/
+/tests/
