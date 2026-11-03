@@ -19,17 +19,8 @@ have() {
 }
 
 archive_url() {
-  case "$LOCALVLLM_REF" in
-    v*|refs/tags/*)
-      printf '%s/refs/tags/%s.tar.gz\n' "$LOCALVLLM_TARBALL_BASE" "${LOCALVLLM_REF#refs/tags/}"
-      ;;
-    refs/heads/*)
-      printf '%s/%s.tar.gz\n' "$LOCALVLLM_TARBALL_BASE" "$LOCALVLLM_REF"
-      ;;
-    *)
-      printf '%s/refs/heads/%s.tar.gz\n' "$LOCALVLLM_TARBALL_BASE" "$LOCALVLLM_REF"
-      ;;
-  esac
+  # GitHub resolves unqualified branches and tags; explicit refs stay explicit.
+  printf '%s/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE}" "${LOCALVLLM_REF:-main}"
 }
 
 usage() {
@@ -84,7 +75,7 @@ source_dir="$tmp_dir/localvllm-source"
 log "Installing Local vLLM from ${LOCALVLLM_REPO_URL} (${LOCALVLLM_REF})"
 
 if have git; then
-  git clone --depth 1 --branch "$LOCALVLLM_REF" "$LOCALVLLM_REPO_URL" "$source_dir"
+  git clone --depth 1 --branch "${LOCALVLLM_REF#refs/heads/}" "$LOCALVLLM_REPO_URL" "$source_dir"
 else
   have tar || fail "git or tar is required."
   archive_file="$tmp_dir/localvllm.tar.gz"

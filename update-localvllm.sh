@@ -181,17 +181,8 @@ start_localvllm() {
 }
 
 localvllm_archive_url() {
-  case "${LOCALVLLM_REF:-main}" in
-    v*|refs/tags/*)
-      printf '%s/refs/tags/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF#refs/tags/}"
-      ;;
-    refs/heads/*)
-      printf '%s/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "$LOCALVLLM_REF"
-      ;;
-    *)
-      printf '%s/refs/heads/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF:-main}"
-      ;;
-  esac
+  # GitHub resolves unqualified branches and tags; explicit refs stay explicit.
+  printf '%s/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF:-main}"
 }
 
 resolve_localvllm_source_dir() {
@@ -474,7 +465,6 @@ update_backend_package() {
     return 1
   }
   OLD_VENVS["$backend"]="$old_venv"
-  write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$backend"
   return 0
 }
 
@@ -558,6 +548,59 @@ if [ "$SCRIPTS_CHANGE" -eq 0 ] && [ "$ANY_PACKAGE_CHANGE" -eq 0 ]; then
   exit 0
 fi
 
+TRANSACTION_READY=0
+transaction_cleanup() {
+  local result=$? backend
+  trap - EXIT
+  if [ "$result" -ne 0 ] && [ "$TRANSACTION_READY" -eq 1 ]; then
+    echo "Restoring the previous manager and backend state..." >&2
+    for backend in "${UPDATE_BACKENDS[@]}"; do
+      localvllm_use_backend "$backend" || continue
+      if [ -n "${WAS_RUNNING[$backend]+x}" ]; then
+        stop_localvllm || true
+      fi
+      if [ -n "${OLD_VENVS[$backend]:-}" ]; then
+        vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$backend]}" || true
+      fi
+    done
+    rm -rf "$BIN_DIR" "$LIB_DIR"
+    cp -a "$TMP_DIR/transaction/bin" "$BIN_DIR" || true
+    cp -a "$TMP_DIR/transaction/lib" "$LIB_DIR" || true
+    # Keep the lock inode held by this process while restoring configuration.
+    find "$CONF_ROOT" -mindepth 1 -maxdepth 1 ! -name .localvllm.lock -exec rm -rf -- {} +
+    cp -a "$TMP_DIR/transaction/conf/." "$CONF_ROOT/" || true
+    while IFS= read -r backend; do
+      localvllm_use_backend "$backend" || continue
+      if [ -f "$TMP_DIR/transaction/services/$backend" ]; then
+        cp -a "$TMP_DIR/transaction/services/$backend" "$SERVICE_FILE" || true
+      else
+        rm -f "$SERVICE_FILE"
+      fi
+    done < <(localvllm_backend_list)
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+    for backend in "${UPDATE_BACKENDS[@]}"; do
+      [ -n "${WAS_RUNNING[$backend]+x}" ] || continue
+      localvllm_use_backend "$backend" || continue
+      start_localvllm || true
+    done
+  fi
+  rm -rf "$TMP_DIR"
+  exit "$result"
+}
+mkdir -p "$TMP_DIR/transaction"
+cp -a "$BIN_DIR" "$TMP_DIR/transaction/bin"
+cp -a "$LIB_DIR" "$TMP_DIR/transaction/lib"
+cp -a "$CONF_ROOT" "$TMP_DIR/transaction/conf"
+mkdir -p "$TMP_DIR/transaction/services"
+while IFS= read -r BACKEND; do
+  localvllm_use_backend "$BACKEND" || continue
+  if [ -f "$SERVICE_FILE" ]; then
+    cp -a "$SERVICE_FILE" "$TMP_DIR/transaction/services/$BACKEND"
+  fi
+done < <(localvllm_backend_list)
+TRANSACTION_READY=1
+trap transaction_cleanup EXIT
+
 ###############################################################################
 # STOP RUNNING SERVICES
 ###############################################################################
@@ -581,19 +624,6 @@ done
 # REFRESH SCRIPTS AND UPGRADE PACKAGES
 ###############################################################################
 
-if [ "$SCRIPTS_CHANGE" -eq 1 ]; then
-  STAGED_CLI="$TMP_DIR/localvllm.staged"
-  STAGED_UPDATER="$TMP_DIR/update-localvllm.staged"
-  if ! refresh_scripts; then
-    echo "Error: helper script refresh failed; restarting the previous services." >&2
-    for BACKEND in "${UPDATE_BACKENDS[@]}"; do
-      [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
-      localvllm_use_backend "$BACKEND" || continue
-      localvllm_service_is_active || start_localvllm || true
-    done
-    exit 1
-  fi
-fi
 
 if [ "$SCRIPTS_ONLY" -eq 0 ]; then
   for BACKEND in "${UPDATE_BACKENDS[@]}"; do
@@ -601,19 +631,18 @@ if [ "$SCRIPTS_ONLY" -eq 0 ]; then
     [ "$need" = "none" ] && continue
     if ! update_backend_package "$BACKEND" "$need"; then
       echo "Error: package update failed for $BACKEND; restoring previous environments." >&2
-      for OTHER in "${UPDATE_BACKENDS[@]}"; do
-        localvllm_use_backend "$OTHER" || continue
-        if [ -n "${OLD_VENVS[$OTHER]:-}" ]; then
-          vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$OTHER]}" || true
-          OLD_VENVS["$OTHER"]=""
-        fi
-        if [ -n "${WAS_RUNNING[$OTHER]+x}" ]; then
-          localvllm_service_is_active || start_localvllm || true
-        fi
-      done
       exit 1
     fi
   done
+fi
+
+if [ "$SCRIPTS_CHANGE" -eq 1 ]; then
+  STAGED_CLI="$TMP_DIR/localvllm.staged"
+  STAGED_UPDATER="$TMP_DIR/update-localvllm.staged"
+  if ! refresh_scripts; then
+    echo "Error: helper script refresh failed; restarting the previous services." >&2
+    exit 1
+  fi
 fi
 
 ###############################################################################
@@ -643,12 +672,6 @@ if [ "$START_AFTER_UPDATE" -eq 1 ]; then
     if ! start_localvllm; then
       echo "Error: $BACKEND failed to start after the update." >&2
       START_FAILED["$BACKEND"]=1
-      if [ -n "${OLD_VENVS[$BACKEND]:-}" ]; then
-        echo "Restoring the previous environment for $BACKEND..." >&2
-        vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$BACKEND]}" || true
-        OLD_VENVS["$BACKEND"]=""
-        start_localvllm || true
-      fi
       UPDATE_FAILED=1
     fi
   done
@@ -656,6 +679,19 @@ else
   log "Services were left stopped (--no-start)"
 fi
 
+
+if [ "$UPDATE_FAILED" -ne 0 ]; then
+  echo "Update completed with errors; inspect the output above." >&2
+  exit 1
+fi
+
+commit_staged_helpers
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  localvllm_use_backend "$BACKEND" || continue
+  localvllm_backend_installed "$BACKEND" || continue
+  write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$BACKEND"
+done
+TRANSACTION_READY=0
 # A previous environment is only needed until its service has started. Keep it
 # for backends that failed to start, remove it for successful/not-running ones.
 for BACKEND in "${UPDATE_BACKENDS[@]}"; do
@@ -666,11 +702,5 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
   fi
 done
 
-if [ "$UPDATE_FAILED" -ne 0 ]; then
-  echo "Update completed with errors; inspect the output above." >&2
-  exit 1
-fi
-
 log "Local vLLM update completed"
 print_versions
-commit_staged_helpers

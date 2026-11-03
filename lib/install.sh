@@ -16,7 +16,7 @@ config_assignment_value() {
 }
 
 # Preserve user-tuned runtime settings when the packaged config is refreshed.
-# Values are written with %q so quotes, spaces, and shell characters survive.
+# Literal assignments retain their original quoting across repeated refreshes.
 append_runtime_tuning() {
   local installed_conf="${CONF_ROOT:-$CONF_DIR}/localvllm.conf"
   local source_conf="$1"
@@ -84,18 +84,16 @@ append_runtime_tuning() {
   local line
 
   for key in "${keys[@]}"; do
-    value="$(config_assignment_value "$key" "$source_conf" || true)"
-    if [ -n "$value" ]; then
-      # The packaged config uses ${VAR:-default} expressions. Re-writing
-      # those as escaped literals would freeze the expression instead of
-      # letting it expand when the installed config is sourced. Only carry
-      # forward concrete user values.
-      case "$value" in
-        *'${'*|*'$('*|*'`'*|*'\$'*|*'\{'*) continue ;;
-      esac
-      printf -v line '%s=%q' "$key" "$value"
-      content+="$line"$'\n'
-    fi
+    # Preserve the shell representation itself. Re-escaping a %q assignment
+    # adds literal backslashes on every refresh. Empty assignments matter too.
+    line="$(awk -v key="$key" 'index($0, key "=") == 1 {last=$0} END {print last}' "$source_conf" 2>/dev/null || true)"
+    [ -n "$line" ] || continue
+    value="${line#*=}"
+    # Packaged defaults must continue to expand from the new configuration.
+    case "$value" in
+      *'${'*|*'$('*|*'`'*) continue ;;
+    esac
+    content+="$line"$'\n'
   done
 
   if [ -n "$content" ]; then

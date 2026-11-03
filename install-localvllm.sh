@@ -324,7 +324,6 @@ install_backend() {
 
   select_port "$name"
   write_systemd_user_service "$SERVICE_FILE" "$BIN_DIR" "$name"
-  write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$name"
 
   if [ "$was_running" -eq 1 ]; then
     if ! localvllm_start_service; then
@@ -336,6 +335,7 @@ install_backend() {
       return 1
     fi
   fi
+  write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$name"
   [ -z "$old_venv" ] || vllm_venv_finish_update "$old_venv"
 
   echo
