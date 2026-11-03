@@ -369,6 +369,68 @@ vllm_device_hint() {
   esac
 }
 
+# vLLM-Omni's published releases currently support Python 3.11 through 3.13.
+# Prefer 3.12 for new environments (also the current ROCm wheel target).
+localvllm_omni_python_ok() {
+  local version
+  version="$(python_version "$1")" || return 1
+  [[ "$version" =~ ^3\.(11|12|13)(\.|$) ]]
+}
+
+localvllm_python_can_create_venv() {
+  "$1" -c 'import venv, ensurepip' >/dev/null 2>&1
+}
+
+localvllm_find_compatible_python() {
+  local candidate uv_bin installer python_path backend="${1:-omni}"
+  # Honor a deliberately configured interpreter. Plain vLLM may support a
+  # newer Python than Omni; let pip validate a specific plain vLLM version.
+  if [ "${LOCALVLLM_PYTHON:-python3}" != python3 ]; then
+    if localvllm_python_can_create_venv "$LOCALVLLM_PYTHON" &&
+      { { [ "$backend" = vllm ] && python_meets_minimum "$LOCALVLLM_PYTHON" "${LOCALVLLM_MIN_PYTHON:-3.10}"; } ||
+        { [ "$backend" = omni ] && localvllm_omni_python_ok "$LOCALVLLM_PYTHON"; }; }; then
+      command -v "$LOCALVLLM_PYTHON" || printf '%s\n' "$LOCALVLLM_PYTHON"
+      return 0
+    fi
+    echo "Error: configured Python ($LOCALVLLM_PYTHON) is unusable or incompatible with $backend." >&2
+    echo "Use Python 3.11–3.13 with venv and ensurepip for Omni, or install Python 3.12 and retry." >&2
+    return 1
+  fi
+  for candidate in python3.12 python3.13 python3.11 python3; do
+    if command -v "$candidate" >/dev/null 2>&1 && localvllm_omni_python_ok "$candidate" &&
+      localvllm_python_can_create_venv "$candidate"; then
+      command -v "$candidate"
+      return 0
+    fi
+  done
+  # Reuse a managed interpreter first. Everything stays inside the install dir.
+  uv_bin="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools/uv"
+  if [ ! -x "$uv_bin" ]; then
+    if command -v uv >/dev/null 2>&1; then
+      uv_bin="$(command -v uv)"
+    else
+      echo "Python 3.11–3.13 was not found. Downloading uv and an isolated Python 3.12..." >&2
+      mkdir -p "$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools" || return 1
+      installer="$(mktemp)" || return 1
+      if ! curl -fsSL https://astral.sh/uv/install.sh -o "$installer" ||
+        ! UV_UNMANAGED_INSTALL="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools" sh "$installer" >&2; then
+        rm -f "$installer"
+        echo "Error: could not install uv. Install Python 3.12 and retry." >&2
+        return 1
+      fi
+      rm -f "$installer"
+    fi
+  fi
+  echo "Preparing an isolated Python 3.12 in $AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-python..." >&2
+  if ! UV_PYTHON_INSTALL_DIR="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-python" "$uv_bin" python install 3.12 --no-bin >&2; then
+    echo "Error: could not download Python 3.12. Install it using your system package manager and retry." >&2
+    return 1
+  fi
+  python_path="$(UV_PYTHON_INSTALL_DIR="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-python" "$uv_bin" python find 3.12 --managed-python)" || return 1
+  localvllm_omni_python_ok "$python_path" || return 1
+  printf '%s\n' "$python_path"
+}
+
 vllm_venv_create() {
   local venv="$1"
   local python="$2"
@@ -539,8 +601,21 @@ vllm_pip_install_both() {
   [ -n "$omni_pip_args" ] && read -r -a omni_extra <<< "$omni_pip_args"
   command+=("${vllm_extra[@]}" "${omni_extra[@]}")
 
+  # Omni metadata does not always constrain vLLM, but the projects require
+  # matching releases. Resolve the Omni release first instead of installing
+  # an unrelated, newer vLLM release.
   if [ "$vllm_version" = "latest" ]; then
-    command+=(vllm)
+    if [ "$omni_version" = "latest" ]; then
+      omni_version="$(vllm_omni_latest_version)" || {
+        echo "Error: cannot determine the current vLLM-Omni release; check your network or set VLLM_OMNI_VERSION." >&2
+        return 1
+      }
+    fi
+    [[ "$omni_version" =~ ^([0-9]+)\.([0-9]+)\.[0-9]+$ ]] || {
+      echo "Error: cannot automatically match vLLM to Omni version '$omni_version'; set VLLM_VERSION explicitly." >&2
+      return 1
+    }
+    command+=("vllm>=${BASH_REMATCH[1]}.${BASH_REMATCH[2]},<${BASH_REMATCH[1]}.$((10#${BASH_REMATCH[2]} + 1))")
   else
     command+=("vllm==$vllm_version")
   fi

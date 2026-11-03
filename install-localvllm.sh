@@ -282,14 +282,52 @@ install_backend() {
   fi
 
   if [ -x "$VENV_DIR/bin/python" ]; then
-    target_venv="$(vllm_venv_stage_update "$VENV_DIR")" || {
-      echo "Error: could not stage an update of $VENV_DIR." >&2
+    if [ "$name" = omni ] && ! localvllm_omni_python_ok "$VENV_DIR/bin/python"; then
+      log "The existing Omni environment uses an incompatible Python; preparing a replacement"
+      LOCALVLLM_PYTHON="$(localvllm_find_compatible_python "$name")" || {
+        if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+        return 1
+      }
+      target_venv="$(mktemp -d "${VENV_DIR}.update.XXXXXX")" || {
+        if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+        return 1
+      }
+      vllm_venv_create "$target_venv" "$LOCALVLLM_PYTHON" || {
+        rm -rf "$target_venv"
+        if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+        return 1
+      }
+    else
+      target_venv="$(vllm_venv_stage_update "$VENV_DIR")" || {
+        echo "Error: could not stage an update of $VENV_DIR." >&2
+        if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+        return 1
+      }
+    fi
+  elif [ -e "$VENV_DIR" ]; then
+    log "The existing environment is incomplete; preparing a replacement"
+    LOCALVLLM_PYTHON="$(localvllm_find_compatible_python "$name")" || {
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+      return 1
+    }
+    target_venv="$(mktemp -d "${VENV_DIR}.update.XXXXXX")" || {
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+      return 1
+    }
+    vllm_venv_create "$target_venv" "$LOCALVLLM_PYTHON" || {
+      rm -rf "$target_venv"
       if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
       return 1
     }
   else
+    LOCALVLLM_PYTHON="$(localvllm_find_compatible_python "$name")" || {
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+      return 1
+    }
     vllm_venv_create "$VENV_DIR" "$LOCALVLLM_PYTHON" || {
+      rm -rf "$VENV_DIR"
       echo "Error: could not create the $name virtual environment." >&2
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
       return 1
     }
     target_venv="$VENV_DIR"
@@ -407,10 +445,19 @@ case "$TARGET_DEVICE" in
 esac
 log "Detected device: $(vllm_device_hint "$TARGET_DEVICE")"
 case "$TARGET_DEVICE" in
-  cpu|rocm)
+  rocm)
     if [ -z "${VLLM_PIP_ARGS:-}" ]; then
-      echo "Warning: $TARGET_DEVICE installs usually need the vendor wheel index in VLLM_PIP_ARGS." >&2
-      echo "See the official vLLM installation guide for the current index URL." >&2
+      fail "AMD ROCm was detected, but a compatible vLLM wheel was not selected.
+
+The default PyPI wheel may be for NVIDIA CUDA. Follow the AMD setup guide to
+choose a vLLM version and wheel index for your GPU and ROCm stack:
+  https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation"
+    fi
+    ;;
+  cpu)
+    if [ -z "${VLLM_PIP_ARGS:-}" ]; then
+      echo "Warning: CPU installs need a compatible CPU wheel or upstream source build." >&2
+      echo "See https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation" >&2
     fi
     ;;
 esac
@@ -422,9 +469,6 @@ fi
 
 install_system_dependencies
 
-if ! python_meets_minimum "$LOCALVLLM_PYTHON" "$LOCALVLLM_MIN_PYTHON"; then
-  fail "$LOCALVLLM_PYTHON is missing or older than $LOCALVLLM_MIN_PYTHON. Install a newer Python and retry."
-fi
 
 for BACKEND in "${INSTALL_BACKENDS[@]}"; do
   write_backend_profile "$CONF_ROOT" "$BACKEND"

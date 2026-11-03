@@ -38,9 +38,9 @@ On a supported Linux computer with an NVIDIA GPU and working driver, run:
 curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash
 ```
 
-The installer automatically creates the Python environment and installs the text
-engine; you do not need to install vLLM yourself. It may ask for sudo and can
-take time and disk space. Then open a new terminal and run:
+The installer sets up the text engine automatically. If a compatible Python is
+missing, it also downloads an isolated Python 3.12 without changing your system
+Python. Installation may request sudo and needs internet and disk space. Then open a new terminal and run:
 
 ```bash
 localvllm setup
@@ -52,7 +52,10 @@ choose a model that fits your GPU. Use `localvllm status` to check the server
 and `localvllm ui` to find its API documentation. The project currently provides
 a command-line interface and API documentation, not a graphical chat app.
 
-For AMD, CPU, or advanced setups, see the [installation guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation).
+Already installed and Omni reports a Python error? Run `localvllm update
+--scripts-only`, then retry `localvllm backend install omni`.
+
+For AMD, CPU, ARM64, or advanced setups, see the [installation guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation).
 
 ## Why Local AI Server for vLLM?
 
@@ -85,9 +88,11 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 
 ## Requirements
 
-- Linux x86-64 or ARM64, Python 3.10+ with `venv`, and enough disk space.
+- Linux x86-64 or ARM64 and enough disk space. New environments use Python
+  3.11–3.13; the installer can provide an isolated Python 3.12 if needed.
 - An NVIDIA GPU with a working driver and enough VRAM for your chosen model is
   recommended. ROCm needs compatible wheels; CPU support is experimental.
+  Fedora/RHEL and ARM64 availability depends on upstream packages and drivers.
 - The installer may need `sudo` for system packages. It does not install GPU
   drivers. See the [full requirements](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#requirements).
 
@@ -106,7 +111,7 @@ localvllm backend install omni  # Add vLLM-Omni later
 
 The default backend is `vllm`. Use `localvllm --backend omni` to target Omni.
 For GGUF models, consider [Local AI Server](https://github.com/hossbit/local-ai-server),
-which uses llama.cpp. [GGUF details](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#gguf-models).
+which uses llama.cpp. [GGUF details](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#gguf-models).
 
 ## Security
 
@@ -122,8 +127,8 @@ Read the [security guide](https://github.com/hossbit/comai-linux-assistant-wiki/
 **[Open the Local vLLM wiki guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md)** for installation options,
 models, backend configuration, API examples, updates, and troubleshooting.
 
-- [Model setup](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models) · [Full command reference](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#commands)
-- [Configuration](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#configuration) · [Troubleshooting](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#troubleshooting)
+- [Model setup](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models) · [Full command reference](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#commands)
+- [Configuration](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#configuration) · [Troubleshooting](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#troubleshooting)
 - [vLLM documentation](https://docs.vllm.ai/) · [vLLM-Omni documentation](https://docs.vllm.ai/projects/vllm-omni/)
 - [Report an issue](https://github.com/hossbit/local-ai-server-vllm/issues)
 

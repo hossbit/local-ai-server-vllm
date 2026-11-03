@@ -221,6 +221,9 @@ if [ "$REMOVE_ALL" -eq 1 ]; then
   echo "  helper scripts: $BIN_DIR"
   echo "  libraries:      $LIB_DIR"
   echo "  configuration:  $CONF_ROOT"
+  if [ "$KEEP_VENV" -eq 0 ]; then
+    echo "  managed Python and tools: $VENV_ROOT/.localvllm-*"
+  fi
   echo "  logs:           $AI_DIR/$LOCALVLLM_LOGS_SUBDIR"
   echo "  CLI link:       $LOCALVLLM_CLI_LINK"
 fi
@@ -264,6 +267,11 @@ for BACKEND in "${REMOVE_BACKENDS[@]}"; do
   remove_if_exists "$LOG_FILE"
   [ "$KEEP_VENV" -eq 1 ] || remove_if_exists "$VENV_DIR"
 done
+
+if [ "$REMOVE_ALL" -eq 1 ] && [ "$KEEP_VENV" -eq 0 ]; then
+  remove_if_exists "$VENV_ROOT/.localvllm-python"
+  remove_if_exists "$VENV_ROOT/.localvllm-tools"
+fi
 
 if has_systemctl_user; then
   systemctl --user daemon-reload || warn "could not reload the systemd user manager"

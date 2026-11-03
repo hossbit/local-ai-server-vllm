@@ -386,6 +386,9 @@ package_need_for_backend() {
       warn "could not check PyPI for the latest vLLM version; keeping the installed version"
     fi
   else
+    if ! localvllm_omni_python_ok "$VENV_DIR/bin/python"; then
+      need=omni
+    fi
     if target_omni="$(target_version VLLM_OMNI_VERSION omni)"; then
       if [ -n "$target_omni" ] && ! versions_match "$target_omni" "$installed_omni"; then
         need=omni
@@ -418,10 +421,20 @@ update_backend_package() {
   mkdir -p "$(dirname "$pip_log")"
   : >> "$pip_log"
 
-  stage_venv="$(vllm_venv_stage_update "$VENV_DIR")" || {
-    echo "Error: could not stage an update of $VENV_DIR." >&2
-    return 1
-  }
+  if [ "$backend" = omni ] && ! localvllm_omni_python_ok "$VENV_DIR/bin/python"; then
+    local compatible_python
+    compatible_python="$(localvllm_find_compatible_python)" || return 1
+    stage_venv="$(mktemp -d "${VENV_DIR}.update.XXXXXX")" || return 1
+    if ! vllm_venv_create "$stage_venv" "$compatible_python"; then
+      rm -rf "$stage_venv"
+      return 1
+    fi
+  else
+    stage_venv="$(vllm_venv_stage_update "$VENV_DIR")" || {
+      echo "Error: could not stage an update of $VENV_DIR." >&2
+      return 1
+    }
+  fi
 
   if ! vllm_bootstrap_pip "$stage_venv" "$pip_log"; then
     rm -rf "$stage_venv"

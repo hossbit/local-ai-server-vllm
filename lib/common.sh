@@ -645,25 +645,25 @@ vllm_installed_version() {
   local out
 
   [ -n "$venv" ] || return 0
-
-  if [ -x "$venv/bin/vllm" ]; then
-    out="$("$venv/bin/vllm" --version 2>&1 | head -n1 || true)"
-    out="$(printf '%s' "$out" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?([A-Za-z0-9.+_-]*)?' | head -n1 || true)"
+  # Read package metadata without importing GPU libraries. `vllm --version`
+  # can print warnings with timestamps before the actual version.
+  if [ -x "$venv/bin/python" ]; then
+    out="$("$venv/bin/python" -c 'from importlib.metadata import version; print(version("vllm"))' 2>/dev/null)" || out=""
     if [ -n "$out" ]; then
       printf '%s\n' "$out"
       return 0
     fi
   fi
-
-  if [ -x "$venv/bin/python" ]; then
-    "$venv/bin/python" -c 'import vllm; print(vllm.__version__)' 2>/dev/null | head -n1 || true
+  if [ -x "$venv/bin/vllm" ]; then
+    out="$("$venv/bin/vllm" --version 2>/dev/null)" || out=""
+    printf '%s\n' "$out" | sed -nE 's/^(vllm[[:space:]]+)?([0-9]+\.[0-9]+(\.[0-9]+)?[A-Za-z0-9.+_-]*)$/\2/p' | tail -n1
   fi
 }
 
 vllm_latest_version() {
   local json
 
-  json="$(curl -4 --connect-timeout 10 --max-time 30 -fsSL https://pypi.org/pypi/vllm/json)" || return 1
+  json="$(curl --connect-timeout 10 --max-time 30 -fsSL https://pypi.org/pypi/vllm/json)" || return 1
   jq -er '.info.version' <<<"$json"
 }
 
@@ -677,7 +677,7 @@ vllm_omni_installed_version() {
 vllm_omni_latest_version() {
   local json
 
-  json="$(curl -4 --connect-timeout 10 --max-time 30 -fsSL https://pypi.org/pypi/vllm-omni/json)" || return 1
+  json="$(curl --connect-timeout 10 --max-time 30 -fsSL https://pypi.org/pypi/vllm-omni/json)" || return 1
   jq -er '.info.version' <<<"$json"
 }
 
