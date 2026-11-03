@@ -37,6 +37,8 @@ BIN_DIR="$AI_DIR/$LOCALVLLM_BIN_SUBDIR"
 localvllm_capture_global_runtime
 
 BACKEND_ARG="${LOCALVLLM_BACKEND:-$LOCALVLLM_DEFAULT_BACKEND}"
+MODEL_ARG=""
+WORKER=0
 POSITIONAL=()
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -45,6 +47,10 @@ while [ "$#" -gt 0 ]; do
       BACKEND_ARG="$2"
       shift 2
       ;;
+    --model)
+      [ "$#" -ge 2 ] || exit 2
+      MODEL_ARG="$2"; shift 2 ;;
+    --worker) WORKER=1; shift ;;
     --backend=*)
       BACKEND_ARG="${1#--backend=}"
       shift
@@ -71,7 +77,18 @@ SERVE_ENV="${POSITIONAL[1]:-$CONF_DIR/$LOCALVLLM_SERVE_ENV_FILE}"
 
 mkdir -p "$CONF_DIR" "$MODELS_DIR" "$OVERRIDES_DIR"
 
-if ! localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR"; then
+if [ "$WORKER" = 0 ] && [ "$(localvllm_serving_mode)" = swap ]; then
+  source_localvllm_lib router.sh
+  localvllm_router_generate "$SERVE_SH" "$SERVE_ENV"
+  exit $?
+fi
+if [ -n "$MODEL_ARG" ]; then
+  ENTRY="$(localvllm_find_entry "$MODELS_DIR" "$MODEL_ARG" "$OVERRIDES_DIR")" || {
+    echo "Error: model not found: $MODEL_ARG" >&2; exit 1;
+  }
+  IFS=$'\t' read -r ACTIVE_ID _ ACTIVE_MODEL ACTIVE_FORMAT _ <<< "$ENTRY"
+  ACTIVE_OVERRIDE="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$ACTIVE_ID" || true)"
+elif ! localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR"; then
   exit 1
 fi
 
@@ -383,6 +400,10 @@ for ENV_ITEM in "${ENV_ITEMS[@]}"; do
   fi
 done
 
+if [ "$WORKER" = 1 ]; then
+  LOCALVLLM_LISTEN_HOST=127.0.0.1
+  API_KEY=""
+fi
 VLLM_ARGS=("$VLLM_BIN" serve "$MODEL" --host "$LOCALVLLM_LISTEN_HOST" --port "$PORT")
 VLLM_ARGS+=(--served-model-name "$SERVED_MODEL_NAME")
 if [ "$ENGINE_DEFAULTS" = "0" ]; then
@@ -445,8 +466,19 @@ trap 'rm -f -- "$TMP_SH" "$TMP_ENV"' EXIT
     ENV_VALUE="${ENV_ITEM#*=}"
     printf 'export %s=%q\n' "$ENV_KEY" "$ENV_VALUE"
   done
+  if [ "$WORKER" = 1 ]; then
+    echo 'unset VLLM_API_KEY'
+    echo 'worker_port="${1:-}"'
+    echo '[[ "$worker_port" =~ ^[0-9]+$ ]] && ((10#$worker_port > 0 && 10#$worker_port < 65536)) || exit 2'
+  fi
   printf 'exec '
-  printf '%q ' "${VLLM_ARGS[@]}"
+  for ((ARG_INDEX=0; ARG_INDEX<${#VLLM_ARGS[@]}; ARG_INDEX++)); do
+    if [ "$WORKER" = 1 ] && [ "$ARG_INDEX" -eq 6 ]; then
+      printf '%s ' '"$worker_port"'
+    else
+      printf '%q ' "${VLLM_ARGS[ARG_INDEX]}"
+    fi
+  done
   printf '\n'
 } > "$TMP_SH"
 

@@ -32,8 +32,8 @@ configurable per model; the defaults are starting points. See the
 This project is deliberately vLLM-only. It borrows the operational
 conveniences of [Local AI Server](https://github.com/hossbit/local-ai-server)
 — installer, CLI, model discovery, per-model overrides, API keys, doctor,
-suggestions, benchmarks, systemd — but uses vLLM's native server instead of
-llama.cpp/llama-swap.
+suggestions, benchmarks, systemd — and runs inference through vLLM's native server. Direct serving is the default;
+[llama-swap](https://github.com/mostlygeek/llama-swap) is an optional routing layer.
 
 <div align="center">
   <a href="https://github.com/hossbit/local-ai-server-vllm/releases/latest"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-release.svg" alt="Latest release" height="68"></a>
@@ -69,14 +69,23 @@ missing, it also downloads an isolated Python 3.12 without changing your system
 Python. Installation may request sudo and needs internet and disk space. Then open a new terminal and run:
 
 ```bash
-localvllm setup
+localvllm
 ```
 
-The guided setup helps you choose text or multimodal, installs the multimodal
-engine if needed, and asks for a model. Model weights download on first start;
-choose a model that fits your GPU. Use `localvllm status` to check the server
-and `localvllm ui` to find its API documentation. The project currently provides
-a command-line interface and API documentation, not a graphical chat app.
+The guided menu lets you download a Hugging Face model, add an existing folder,
+choose vLLM or Omni, and start or stop the server. It installs the chosen engine
+when needed. Choose a model supported by that engine and sized for your GPU.
+`localvllm setup` and `localvllm menu` open the same menu.
+
+| Serving mode | What users get |
+| --- | --- |
+| **Direct (default)** | Clients connect straight to vLLM or Omni; one selected model per backend. |
+| **Automatic switching (optional)** | llama-swap loads the requested model behind the same API address, with a model dashboard. |
+
+Change modes from the menu, or run `localvllm mode swap` / `localvllm mode direct`.
+Use `--backend omni` for Omni. Model files and settings are shared between modes;
+llama-swap is downloaded only when enabled. `localvllm ui` prints the appropriate
+API documentation or dashboard URL. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
 
 Already installed and Omni reports a Python error? Run `localvllm update
 --scripts-only`, then retry `localvllm backend install omni`.
@@ -131,7 +140,10 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 ## Common commands
 
 ```bash
-localvllm setup                 # Guided setup and model selection
+localvllm                       # Guided model management
+localvllm pull ORG/MODEL        # Download a model without switching the server
+localvllm add /path/to/model    # Register a complete existing folder
+localvllm mode                 # Show direct or automatic serving mode
 localvllm status                # Check the selected backend
 localvllm models                # List models
 localvllm start                 # Start the server

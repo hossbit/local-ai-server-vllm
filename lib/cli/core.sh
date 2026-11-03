@@ -10,7 +10,11 @@ Backends (isolated venv, models, port, keys, and service):
   all         both backends, where the command supports it
 
 Commands:
-  setup                  Guided setup: choose a backend and model
+  menu                   Manage models and serving mode interactively
+  setup                  Open the guided model menu
+  pull ORG/MODEL         Download/register a model without changing the active one
+  add /path/to/model     Register an existing folder without copying it
+  mode [direct|swap]     Show/change this backend's serving mode
   start [BACKEND|all]    Start one or both services
   stop [BACKEND|all]     Stop one or both services and release GPU memory
   restart [BACKEND|all]  Restart one or both services
@@ -110,6 +114,7 @@ print_service_details() {
 
   echo "Local $LOCALVLLM_BACKEND_LABEL service details:"
   echo "  backend: $LOCALVLLM_BACKEND"
+  echo "  mode: $(localvllm_serving_mode)"
   echo "  method: $method"
   echo "  service: $LOCALVLLM_SERVICE_NAME"
   echo "  service file: $SERVICE_FILE"

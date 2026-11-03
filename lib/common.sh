@@ -751,7 +751,7 @@ localvllm_detect_format() {
   local spec="$1"
 
   if [ -d "$spec" ]; then
-    if [ -f "$spec/config.json" ]; then
+    if { [ -f "$spec/config.json" ] || [ -f "$spec/model_index.json" ]; }; then
       printf 'hf\n'
       return 0
     fi
@@ -784,7 +784,7 @@ localvllm_cached_model_path() {
     snapshot="$(cat "$root/refs/$revision")"
   fi
   [[ "$snapshot" =~ ^[a-fA-F0-9]+$ ]] || return 1
-  [ -f "$root/snapshots/$snapshot/config.json" ] || return 1
+  { [ -f "$root/snapshots/$snapshot/config.json" ] || [ -f "$root/snapshots/$snapshot/model_index.json" ]; } || return 1
   printf '%s\n' "$root/snapshots/$snapshot"
 }
 
@@ -891,7 +891,7 @@ localvllm_model_entries() {
     local path base id gguf config snapshot model_root parent resolved
     while IFS= read -r path; do
       base="$(basename "$path")"
-      if [ -f "$path/config.json" ]; then
+      if [ -f "$path/config.json" ] || [ -f "$path/model_index.json" ]; then
         id="$base"
         if [ -L "$path" ]; then
           resolved="$(readlink -f "$path")"
@@ -935,6 +935,7 @@ localvllm_model_entries() {
     # This lets models downloaded by vLLM itself appear in `localvllm models`.
     while IFS= read -r config; do
       snapshot="$(dirname "$config")"
+      [ "$(basename "$(dirname "$snapshot")")" = snapshots ] || continue
       model_root="$snapshot"
       while [ "$model_root" != "/" ] && [ "$(basename "$model_root")" != "snapshots" ]; do
         model_root="$(dirname "$model_root")"
@@ -955,7 +956,7 @@ localvllm_model_entries() {
       id_model["$id"]="$snapshot"
       id_format["$id"]=hf
       id_path["$id"]="$snapshot"
-    done < <(find -L "$models_dir" -mindepth 4 -maxdepth 6 -type f -name config.json -path '*/snapshots/*' -print 2>/dev/null | sort)
+    done < <(find -L "$models_dir" -mindepth 4 -maxdepth 6 -type f \( -name config.json -o -name model_index.json \) -path '*/snapshots/*' -print 2>/dev/null | sort)
   fi
 
   if [ -n "$overrides_dir" ] && [ -d "$overrides_dir" ]; then
@@ -1150,7 +1151,18 @@ localvllm_resolve_active() {
 
 # Validate the model before handing a start/restart request to systemd so
 # selection errors are visible in the terminal, not just the service journal.
+localvllm_serving_mode() {
+  local mode=direct
+  [ ! -f "$CONF_DIR/serving-mode" ] || mode="$(cat "$CONF_DIR/serving-mode")"
+  case "$mode" in direct|swap) printf '%s\n' "$mode" ;; *) echo "Error: invalid serving mode: $mode" >&2; return 1 ;; esac
+}
+
 localvllm_require_start_model() {
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR" && return 0
+    echo "Add a model first with 'localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL'." >&2
+    return 1
+  fi
   if ! localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR"; then
     echo "Select a model for the $LOCALVLLM_BACKEND backend before starting it." >&2
     echo "Guided setup: localvllm setup" >&2

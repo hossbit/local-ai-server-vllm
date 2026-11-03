@@ -60,6 +60,7 @@ models_cmd() {
   fi
 
   echo "Backend: $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
+  echo "Serving mode: $(localvllm_serving_mode)"
   echo "Your model folders: $MODELS_DIR"
   echo "Shared download cache: ${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}"
   echo "Add your own: copy or link a complete model folder here, then run localvllm --backend $LOCALVLLM_BACKEND use FOLDER_NAME"
@@ -135,7 +136,10 @@ models_cmd() {
   done
 
   echo
-  if [ -n "$active_id" ]; then
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    echo "Automatic routing: clients select any listed model in each request."
+    [ -z "$active_id" ] || echo "Selection for direct mode: $active_id"
+  elif [ -n "$active_id" ]; then
     echo "Active model: $active_id"
     if [ -n "$ACTIVE_OVERRIDE" ]; then
       echo "Override file: $ACTIVE_OVERRIDE"
@@ -311,6 +315,16 @@ load_cmd() {
       fail "no active model is selected"
   fi
 
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    service_is_active || service_cmd start || return 1
+    if [ -z "$target" ]; then target="$(cat "$ACTIVE_MODEL_FILE" 2>/dev/null || true)"; fi
+    [ -n "$target" ] || { echo "Router ready; select a model in the dashboard or in an API request."; return 0; }
+    base="$(api_base_url)"
+    api_auth_curl_args
+    echo "Loading $target..."
+    curl "${AUTH_CURL_ARGS[@]}" --max-time "$LOCALVLLM_HEALTH_CHECK_TIMEOUT" -fsS "$base/upstream/$target/health" >/dev/null
+    return $?
+  fi
   if service_is_active; then
     if backend_sleep_enabled; then
       base="$(api_base_url)"
@@ -338,6 +352,12 @@ unload_cmd() {
     return 0
   fi
 
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    api_auth_curl_args
+    curl "${AUTH_CURL_ARGS[@]}" --max-time 180 -fsS -X POST "$(api_base_url)/api/models/unload" >/dev/null || return 1
+    echo "Models unloaded; automatic routing remains available."
+    return 0
+  fi
   if backend_sleep_enabled && [ "$(vllm_is_sleeping)" != "true" ]; then
     base="$(api_base_url)"
     api_auth_curl_args
@@ -358,9 +378,10 @@ unload_cmd() {
 
 ui_usage() {
   cat <<'HELP'
-Usage: localvllm ui [--open] [--docs|--api|--models]
+Usage: localvllm ui [--open] [--docs|--dashboard|--api|--models]
 
-  --docs       vLLM OpenAPI documentation (default)
+  --docs       API documentation (automatic mode opens its dashboard)
+  --dashboard  llama-swap model dashboard (requires automatic mode)
   --api        OpenAI-compatible API base URL
   --models     Model listing endpoint
   --open       Open the destination in this Linux desktop's browser
@@ -386,9 +407,9 @@ ui_cmd() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       --open) open_browser=1 ;;
-      --docs|--api|--models) target="${1#--}" ;;
-      -*) fail "usage: localvllm ui [--open] [--docs|--api|--models]" ;;
-      *) fail "usage: localvllm ui [--open] [--docs|--api|--models]" ;;
+      --docs|--dashboard|--api|--models) target="${1#--}" ;;
+      -*) fail "usage: localvllm ui [--open] [--docs|--dashboard|--api|--models]" ;;
+      *) fail "usage: localvllm ui [--open] [--docs|--dashboard|--api|--models]" ;;
     esac
     shift
   done
@@ -396,9 +417,19 @@ ui_cmd() {
   base="$(api_base_url)"
   echo "Backend: $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
   case "$target" in
+    dashboard)
+      [ "$(localvllm_serving_mode)" = swap ] || fail "enable automatic switching first: localvllm --backend $LOCALVLLM_BACKEND mode swap"
+      url="$base/ui"
+      echo "Model dashboard:"
+      ;;
     docs)
-      url="$base/docs"
-      echo "vLLM API documentation:"
+      if [ "$(localvllm_serving_mode)" = swap ]; then
+        url="$base/ui"
+        echo "Model dashboard:"
+      else
+        url="$base/docs"
+        echo "vLLM API documentation:"
+      fi
       ;;
     api)
       url="$base/v1"
@@ -412,7 +443,11 @@ ui_cmd() {
   echo "  $url"
   echo
   echo "OpenAI base URL: $base/v1"
-  echo "vLLM has no built-in chat UI; point Open WebUI or another client at the base URL above."
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    echo "Automatic switching: choose a model from /v1/models in any compatible client."
+  else
+    echo "Direct mode: connect any compatible client to the base URL above."
+  fi
 
   registry="$(api_key_registry_path)"
   if [ -f "$registry" ] && [ -n "$(api_key_active_secrets "$registry" | head -n1)" ]; then

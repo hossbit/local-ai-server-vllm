@@ -68,6 +68,8 @@ source_localvllm_cli_lib cli/suggest.sh
 source_localvllm_cli_lib cli/lifecycle.sh
 source_localvllm_cli_lib cli/key.sh
 source_localvllm_cli_lib cli/backend.sh
+source_localvllm_cli_lib router.sh
+source_localvllm_cli_lib cli/menu.sh
 
 BACKEND_OVERRIDE=""
 LOCALVLLM_BACKEND_REQUESTED=0
@@ -92,6 +94,7 @@ done
 set -- "${ARGS[@]}"
 
 COMMAND="${1:-help}"
+if [ "$#" = 0 ] && [ -t 0 ] && [ -t 1 ]; then COMMAND=menu; fi
 if [ "$#" -gt 0 ]; then
   shift
 fi
@@ -104,14 +107,14 @@ else
 fi
 
 case "$COMMAND" in
-  setup|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
+  mode|pull|add|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
     localvllm_acquire_global_lock
     ;;
 esac
 
 case "$COMMAND" in
-  setup)
-    setup_cmd "$@"
+  menu|setup)
+    menu_cmd "$@"
     ;;
   start|stop|restart)
     service_cmd "$COMMAND" "$@"
@@ -131,6 +134,9 @@ case "$COMMAND" in
   metrics)
     metrics_cmd "$@"
     ;;
+  mode) mode_cmd "$@" ;;
+  pull) pull_cmd "$@" ;;
+  add) add_cmd "$@" ;;
   models)
     models_cmd "$@"
     ;;

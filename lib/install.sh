@@ -23,6 +23,8 @@ append_runtime_tuning() {
   local marker="$2"
   local key value
   local -a keys=(
+    LOCALVLLM_LLAMA_SWAP_BIN
+    LOCALVLLM_LLAMA_SWAP_VERSION
     LOCALVLLM_DEFAULT_BACKEND
     LOCALVLLM_BACKENDS
     LOCALVLLM_SYSTEMD_USER_DIR

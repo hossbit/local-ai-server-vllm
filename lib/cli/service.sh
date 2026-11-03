@@ -156,6 +156,7 @@ status_json_one() {
 
   jq -n \
     --arg backend "$LOCALVLLM_BACKEND" \
+    --arg mode "$(localvllm_serving_mode)" \
     --arg label "$LOCALVLLM_BACKEND_LABEL" \
     --argjson installed "$installed" \
     --arg vllm "$version" \
@@ -169,6 +170,7 @@ status_json_one() {
     --arg log "$LOG_FILE" \
     '{
       backend: $backend,
+      mode: $mode,
       label: $label,
       installed: $installed,
       vllm_version: (if $vllm == "" then null else $vllm end),
