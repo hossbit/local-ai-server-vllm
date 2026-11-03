@@ -184,7 +184,6 @@ status_json_one() {
       active_models: $runtime.active_models,
       direct_model: $runtime.direct_model,
       runtime_state_available: $runtime.runtime_state_available,
-      selected_model_path: (if $model == "" then null else $model end),
       model: (if $runtime.mode == "direct" and $runtime.active_model != "" then $model else null end),
       api_key_active: ($api_key_active == "1"),
       log: $log
