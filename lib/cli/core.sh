@@ -308,7 +308,7 @@ doctor_one_backend() {
 
 doctor_json_one() {
   local installed=false version="" omni_version="" service_state="not installed"
-  local port active_id="" active_model="" api_key_active=0 registry
+  local port active_id="" active_model="" api_key_active=0 registry runtime
   local profile_exists=false python_value="" vram_total vram_free pip_ok=false
 
   localvllm_backend_installed "$LOCALVLLM_BACKEND" && installed=true
@@ -329,6 +329,7 @@ doctor_json_one() {
     active_id="$ACTIVE_ID"
     active_model="$ACTIVE_MODEL"
   fi
+  runtime="$(model_runtime_info)" || return 1
   registry="$(api_key_registry_path)"
   if [ -f "$registry" ] && [ "$(api_key_active_count "$registry")" -gt 0 ]; then
     api_key_active=1
@@ -342,6 +343,7 @@ doctor_json_one() {
   vram_free="$(gpu_vram_free_min_bytes)"
 
   jq -n \
+    --argjson runtime "$runtime" \
     --arg backend "$LOCALVLLM_BACKEND" \
     --arg label "$LOCALVLLM_BACKEND_LABEL" \
     --argjson installed "$installed" \
@@ -365,8 +367,11 @@ doctor_json_one() {
       vllm_omni_version: (if $omni == "" then null else $omni end),
       service: $service,
       port: ($port | tonumber? // null),
-      active_model: (if $active == "" then null else $active end),
-      model: (if $model == "" then null else $model end),
+      active_model: (if $runtime.active_model == "" then null else $runtime.active_model end),
+      active_models: $runtime.active_models,
+      direct_model: $runtime.direct_model,
+      runtime_state_available: $runtime.runtime_state_available,
+      model: (if $runtime.mode == "direct" and $runtime.active_model != "" then $model else null end),
       api_key_active: ($api_key_active == "1"),
       profile_exists: $profile,
       pip_check: $pip_ok,
