@@ -148,16 +148,13 @@ Read the [security guide](https://github.com/hossbit/comai-linux-assistant-wiki/
 
 ## Documentation
 
-[Hossbit installer hub](https://hossbit.github.io/#localvllm) · [Install script](https://hossbit.github.io/localvllm/install.sh)
+- [Getting started](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md) — install, choose a model, and run the server.
+- [AMD, CPU, and ARM64 setup](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation) — hardware-specific guidance.
+- [Commands](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#commands) and [configuration](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#configuration) — full reference and tuning options.
+- [Troubleshooting](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#troubleshooting) — installation and runtime help.
+- [vLLM](https://docs.vllm.ai/) and [vLLM-Omni](https://docs.vllm.ai/projects/vllm-omni/) — upstream documentation.
 
-
-**[Open the Local vLLM wiki guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md)** for installation options,
-models, backend configuration, API examples, updates, and troubleshooting.
-
-- [Model setup](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models) · [Full command reference](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#commands)
-- [Configuration](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#configuration) · [Troubleshooting](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#troubleshooting)
-- [vLLM documentation](https://docs.vllm.ai/) · [vLLM-Omni documentation](https://docs.vllm.ai/projects/vllm-omni/)
-- [Report an issue](https://github.com/hossbit/local-ai-server-vllm/issues)
+[Installer hub](https://hossbit.github.io/#localvllm) · [Report an issue](https://github.com/hossbit/local-ai-server-vllm/issues)
 
 ## License
 
