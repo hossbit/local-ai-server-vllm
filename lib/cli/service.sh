@@ -3,11 +3,22 @@
 service_cmd_one() {
   local action="$1"
 
+  case "$action" in
+    start)
+      if ! service_is_active; then
+        localvllm_require_start_model || return 1
+      fi
+      ;;
+    restart) localvllm_require_start_model || return 1 ;;
+  esac
+
   if has_user_service; then
     print_service_details "systemd user service"
     echo "Running: systemctl --user $action $SERVICE_UNIT"
     if ! systemctl --user "$action" "$SERVICE_UNIT"; then
       echo "Error: systemctl --user $action $SERVICE_UNIT failed." >&2
+      echo "Details: journalctl --user -u $LOCALVLLM_SERVICE_NAME -n 30 --no-pager" >&2
+      echo "Server log: $LOG_FILE" >&2
       return 1
     fi
     echo "Local $LOCALVLLM_BACKEND_LABEL service $action completed."

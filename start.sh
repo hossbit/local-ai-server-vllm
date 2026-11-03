@@ -101,6 +101,8 @@ if [ -f "$PID_FILE" ]; then
   rm -f "$PID_FILE" "$PID_START_FILE" "$CONF_DIR/process-group"
 fi
 
+localvllm_require_start_model || exit 1
+
 if port_is_listening "$PORT"; then
   echo "Error: port $PORT is already in use by another process." >&2
   echo "Change LOCALVLLM_${LOCALVLLM_BACKEND^^}_PORT or stop the other process." >&2
@@ -120,10 +122,6 @@ if [ ! -x "$SERVE_SH" ]; then
   exit 1
 fi
 
-if ! localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR"; then
-  echo "Warning: no models found in $MODELS_DIR."
-  echo "The service will start, but requests need a model selected with 'localvllm use MODEL'."
-fi
 
 # Public listeners: require an active key and explicit acknowledgement. vLLM's
 # key does not protect /health, /docs, or sleep/dev endpoints.

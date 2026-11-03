@@ -1028,7 +1028,7 @@ localvllm_resolve_active() {
 
     if [ "$found" -eq 0 ]; then
       echo "Error: active model '$active_id' is not available under $models_dir or $overrides_dir." >&2
-      echo "Choose an available model with 'localvllm use MODEL', or remove $active_file." >&2
+      echo "Choose an available model with 'localvllm --backend ${LOCALVLLM_BACKEND:-vllm} use MODEL', or remove $active_file." >&2
       return 1
     fi
   elif [ -n "${LOCALVLLM_MODEL:-}" ]; then
@@ -1052,12 +1052,12 @@ localvllm_resolve_active() {
 
     if [ "${#ids[@]}" -eq 0 ]; then
       echo "Error: no models found in $models_dir." >&2
-      echo "Add a Hugging Face model directory, or run 'localvllm use org/model'." >&2
+      echo "Add a Hugging Face model directory, or run 'localvllm --backend ${LOCALVLLM_BACKEND:-vllm} use org/model'." >&2
       return 1
     fi
     if [ "${#ids[@]}" -gt 1 ]; then
       echo "Error: multiple models are available; choose one first." >&2
-      echo "Run: localvllm use MODEL" >&2
+      echo "Run: localvllm --backend ${LOCALVLLM_BACKEND:-vllm} use MODEL" >&2
       echo "Available models:" >&2
       printf '  %s\n' "${ids[@]}" >&2
       return 1
@@ -1069,6 +1069,18 @@ localvllm_resolve_active() {
   fi
 
   return 0
+}
+
+# Validate the model before handing a start/restart request to systemd so
+# selection errors are visible in the terminal, not just the service journal.
+localvllm_require_start_model() {
+  if ! localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR"; then
+    echo "Select a model for the $LOCALVLLM_BACKEND backend before starting it." >&2
+    echo "Guided setup: localvllm setup" >&2
+    echo "Or select one: localvllm --backend $LOCALVLLM_BACKEND use MODEL" >&2
+    echo "Then start: localvllm start $LOCALVLLM_BACKEND" >&2
+    return 1
+  fi
 }
 
 localvllm_write_active() {
