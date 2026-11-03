@@ -145,6 +145,8 @@ localvllm pull ORG/MODEL        # Download a model without switching the server
 localvllm add /path/to/model    # Register a complete existing folder
 localvllm mode                 # Show direct or automatic serving mode
 localvllm status                # Check the selected backend
+localvllm version               # Manager, engines, Python and optional router
+localvllm update                # Update installed components safely
 localvllm models                # List models
 localvllm start                 # Start the server
 localvllm stop                  # Stop the server

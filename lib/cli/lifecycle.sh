@@ -152,7 +152,7 @@ update_cmd() {
 }
 
 version_cmd() {
-  local selector original_backend name device
+  local selector original_backend name device swap_binary swap_version
 
   [ "$#" -le 1 ] || fail "usage: localvllm version [BACKEND|all]"
   if [ "$#" -eq 1 ]; then
@@ -166,10 +166,16 @@ version_cmd() {
 
   echo "Local vLLM manager: $LOCALVLLM_VERSION"
   echo "Install directory: $AI_DIR"
+  if swap_binary="$(localvllm_swap_bin)"; then
+    swap_version="$(localvllm_swap_version "$swap_binary")" || swap_version=unknown
+    echo "llama-swap: ${swap_version:-unknown} ($swap_binary)"
+  else
+    echo "llama-swap: not installed (optional)"
+  fi
 
   if command -v nvidia-smi >/dev/null 2>&1; then
-    device="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd', ' -)"
-    [ -n "$device" ] && echo "GPU: $device"
+    device="$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd', ' -)" || device=""
+    if [ -n "$device" ]; then echo "GPU: $device"; else echo 'GPU: NVIDIA device query unavailable'; fi
   elif command -v rocm-smi >/dev/null 2>&1 || [ -e /dev/kfd ]; then
     echo "GPU: AMD ROCm"
   else
@@ -194,6 +200,7 @@ version_one() {
 
   echo
   echo "== $LOCALVLLM_BACKEND ($LOCALVLLM_BACKEND_LABEL) =="
+  echo "Serving mode: $(localvllm_serving_mode)"
   vllm_version="$(vllm_installed_version "$VENV_DIR")"
   echo "vLLM: ${vllm_version:-not installed}"
   if [ "$LOCALVLLM_BACKEND" = "omni" ]; then
@@ -202,7 +209,7 @@ version_one() {
   fi
 
   if [ -x "$VENV_DIR/bin/python" ]; then
-    py_version="$(python_version "$VENV_DIR/bin/python")"
+    py_version="$(python_version "$VENV_DIR/bin/python")" || py_version=""
     echo "Python: ${py_version:-unknown}"
   else
     echo "Python: virtual environment missing"

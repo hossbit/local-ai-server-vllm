@@ -13,16 +13,31 @@ localvllm_swap_bin() {
   fi
 }
 
-localvllm_install_swap() {
-  local arch version="${LOCALVLLM_LLAMA_SWAP_VERSION:-v269}" tmp archive digest
-  localvllm_swap_bin >/dev/null 2>&1 && return 0
-  mkdir -p "$AI_DIR/$LOCALVLLM_BIN_SUBDIR"
+localvllm_swap_version() {
+  local binary="${1:-}" output
+  [ -n "$binary" ] || binary="$(localvllm_swap_bin)" || return 1
+  output="$("$binary" -version 2>/dev/null)" || return 1
+  printf '%s\n' "$output" | sed -nE 's/^version: (v[0-9]+).*$/\1/p' | head -n1
+}
+
+localvllm_swap_target_version() {
+  local version="${LOCALVLLM_LLAMA_SWAP_VERSION:-latest}"
+  if [ "$version" = latest ]; then
+    version="$(curl --connect-timeout 10 --max-time 30 -fsSL https://api.github.com/repos/mostlygeek/llama-swap/releases/latest | jq -er .tag_name)" || return 1
+  fi
+  [[ "$version" =~ ^v[0-9]+$ ]] || return 1
+  printf '%s\n' "$version"
+}
+
+# Download only to a staging path. Never overwrite a live executable.
+localvllm_download_swap() {
+  local destination="$1" version="$2" arch tmp archive digest
   case "$(uname -m)" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) echo 'Unsupported llama-swap binary architecture.' >&2; return 1 ;; esac
   [[ "$version" =~ ^v[0-9]+$ ]] || return 1
   archive="llama-swap_${version#v}_linux_${arch}.tar.gz"
   tmp="$(mktemp -d)" || return 1
-  if ! curl -fL --retry 2 -o "$tmp/$archive" "https://github.com/mostlygeek/llama-swap/releases/download/$version/$archive" ||
-     ! curl -fsSL -o "$tmp/checksums" "https://github.com/mostlygeek/llama-swap/releases/download/$version/llama-swap_${version#v}_checksums.txt"; then
+  if ! curl -fL --connect-timeout 10 --max-time 300 --retry 2 -o "$tmp/$archive" "https://github.com/mostlygeek/llama-swap/releases/download/$version/$archive" ||
+     ! curl --connect-timeout 10 --max-time 30 -fsSL -o "$tmp/checksums" "https://github.com/mostlygeek/llama-swap/releases/download/$version/llama-swap_${version#v}_checksums.txt"; then
     rm -rf "$tmp"; return 1
   fi
   digest="$(awk -v f="$archive" '$2 == f {print $1}' "$tmp/checksums")"
@@ -31,10 +46,26 @@ localvllm_install_swap() {
     rm -rf "$tmp"; return 1
   fi
   if ! tar -xzf "$tmp/$archive" -C "$tmp" llama-swap ||
-     ! install -m755 "$tmp/llama-swap" "$AI_DIR/$LOCALVLLM_BIN_SUBDIR/llama-swap"; then
+     ! install -m755 "$tmp/llama-swap" "$destination"; then
     rm -rf "$tmp"; return 1
   fi
   rm -rf "$tmp"
+  if [ "$(localvllm_swap_version "$destination")" != "$version" ]; then
+    echo 'Error: staged llama-swap version verification failed.' >&2
+    return 1
+  fi
+}
+
+localvllm_install_swap() {
+  local version destination
+  localvllm_swap_bin >/dev/null 2>&1 && return 0
+  version="$(localvllm_swap_target_version)" || return 1
+  mkdir -p "$AI_DIR/$LOCALVLLM_BIN_SUBDIR"
+  destination="$AI_DIR/$LOCALVLLM_BIN_SUBDIR/llama-swap"
+  if ! localvllm_download_swap "$destination.next" "$version"; then
+    rm -f "$destination.next"; return 1
+  fi
+  mv -f "$destination.next" "$destination"
 }
 
 localvllm_router_generate() (
@@ -76,6 +107,7 @@ localvllm_router_generate() (
   digest="$(sha256sum "$config" | awk '{print $1}')"
   config="$root/$digest.json"
   install -m600 "$work/config.json" "$config"
+  "$binary" -config "$config" -validate >/dev/null || return 1
   port="$LOCALVLLM_DEFAULT_PORT"
   [ ! -f "$PORT_FILE" ] || port="$(cat "$PORT_FILE")"
   [[ "$port" =~ ^[0-9]+$ ]] && ((10#$port > 0 && 10#$port < 65536)) || return 1

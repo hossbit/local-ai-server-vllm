@@ -114,6 +114,7 @@ menu_loop() {
     echo '  b) Choose vLLM or Omni              m) Direct or automatic switching'
     echo '  i) API and storage details          t) Advanced model settings'
     if [ "$mode" = swap ]; then echo '  w) Open model dashboard'; else echo '  w) Open API documentation'; fi
+    echo '  u) Update all installed components'
     echo '  q) Quit' 
     printf 'Choose a model number or an action: '
     read -r choice || return 0
@@ -138,6 +139,9 @@ menu_loop() {
         fi ;;
       r|R) if menu_ensure_engine; then menu_run start || echo 'Choose or add a model, then retry.'; fi ;;
       s|S) menu_run stop || echo 'Stop failed; see the error above.' ;;
+      u|U)
+        echo 'Checking the manager, installed engines and optional router. Affected services may restart.'
+        "$SCRIPT_PATH" update || echo 'Update failed; see the error above.' ;;
       b|B)
         echo '1) vLLM — text, vision input, embeddings and reranking'
         echo '2) Omni — supported audio, image, video and multimodal generation'

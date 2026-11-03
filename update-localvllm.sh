@@ -31,6 +31,7 @@ source_localvllm_common() {
 }
 source_localvllm_common
 source_localvllm_lib install.sh
+source_localvllm_lib router.sh
 
 AI_DIR="$(resolve_ai_dir)"
 CONF_ROOT="$AI_DIR/$LOCALVLLM_CONF_SUBDIR"
@@ -69,14 +70,14 @@ usage() {
   cat <<EOF
 Usage: $0 [--no-start] [--backend NAME|all] [--scripts-only] [--vllm-only]
 
-Updates the Local vLLM manager and/or engine packages.
+Updates the manager, selected engine packages, and installed managed llama-swap.
 
 Options:
   --backend NAME   Update vllm, omni, or all (default: all installed)
   --all            Same as --backend all
   --no-start       Leave previously running services stopped
-  --scripts-only   Refresh helper scripts/config, do not upgrade packages
-  --vllm-only      Upgrade packages, do not refresh helper scripts
+  --scripts-only   Refresh helper scripts/config; keep engine/router versions
+  --vllm-only      Upgrade engine packages only; keep manager/router versions
   -h, --help       Show this help
 
 vLLM and vLLM-Omni use separate venvs. When pinning vLLM-Omni, keep
@@ -482,7 +483,13 @@ update_backend_package() {
 }
 
 print_versions() {
-  local backend version
+  local backend version binary
+  version="$( (unset LOCALVLLM_VERSION; . "$CONF_ROOT/localvllm.conf"; printf '%s' "$LOCALVLLM_VERSION") )"
+  echo "Manager: $version"
+  if binary="$(localvllm_swap_bin)"; then
+    version="$(localvllm_swap_version "$binary")" || version=unknown
+    echo "llama-swap: ${version:-unknown} ($binary)"
+  fi
 
   echo
   echo "Current versions:"
@@ -555,7 +562,53 @@ if [ "$VLLM_ONLY" -eq 0 ] &&
   SCRIPTS_CHANGE=1
 fi
 
-if [ "$SCRIPTS_CHANGE" -eq 0 ] && [ "$ANY_PACKAGE_CHANGE" -eq 0 ]; then
+# The router is optional and shared. Only replace the executable owned by
+# this installation; never modify a configured external/PATH installation.
+ROUTER_CHANGE=0
+STAGED_ROUTER=""
+if [ "$SCRIPTS_ONLY" = 0 ] && [ "$VLLM_ONLY" = 0 ]; then
+  if SWAP_BIN="$(localvllm_swap_bin)"; then
+    if [ "$(realpath "$SWAP_BIN")" = "$(realpath -m "$BIN_DIR/llama-swap")" ]; then
+      if SWAP_TARGET="$(localvllm_swap_target_version)"; then
+        SWAP_CURRENT="$(localvllm_swap_version "$SWAP_BIN")" || SWAP_CURRENT=""
+        if [ "$SWAP_CURRENT" != "$SWAP_TARGET" ]; then
+          log "Staging llama-swap $SWAP_TARGET (installed: ${SWAP_CURRENT:-unknown})"
+          STAGED_ROUTER="$TMP_DIR/llama-swap.staged"
+          localvllm_download_swap "$STAGED_ROUTER" "$SWAP_TARGET" || fail 'could not stage llama-swap; installed components were not changed'
+          ROUTER_CHANGE=1
+        fi
+      else
+        warn 'could not check llama-swap releases; keeping the installed router'
+      fi
+    else
+      log "External llama-swap is managed separately: $SWAP_BIN"
+    fi
+  fi
+fi
+
+# Shared helper/router changes can affect an unselected backend too. Include
+# its service in the rollback scope without upgrading its Python packages.
+if [ "$SCRIPTS_CHANGE" = 1 ] || [ "$ROUTER_CHANGE" = 1 ]; then
+  while IFS= read -r BACKEND; do
+    localvllm_use_backend "$BACKEND" || continue
+    localvllm_backend_installed "$BACKEND" || continue
+    if [ -z "${NEED[$BACKEND]+x}" ]; then
+      NEED["$BACKEND"]=none
+      UPDATE_BACKENDS+=("$BACKEND")
+    fi
+    if service_is_active; then WAS_RUNNING["$BACKEND"]=1; fi
+  done < <(localvllm_backend_list)
+fi
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  localvllm_use_backend "$BACKEND" || continue
+  if [ "$SCRIPTS_CHANGE" = 0 ] && [ "${NEED[$BACKEND]:-none}" = none ]; then
+    if [ "$ROUTER_CHANGE" = 0 ] || [ "$(localvllm_serving_mode)" != swap ]; then
+      unset 'WAS_RUNNING[$BACKEND]'
+    fi
+  fi
+done
+
+if [ "$SCRIPTS_CHANGE" -eq 0 ] && [ "$ANY_PACKAGE_CHANGE" -eq 0 ] && [ "$ROUTER_CHANGE" = 0 ]; then
   log "Everything is already up to date"
   print_versions
   exit 0
@@ -592,6 +645,7 @@ transaction_cleanup() {
     done < <(localvllm_backend_list)
     systemctl --user daemon-reload >/dev/null 2>&1 || true
     for backend in "${UPDATE_BACKENDS[@]}"; do
+      [ "$START_AFTER_UPDATE" = 1 ] || continue
       [ -n "${WAS_RUNNING[$backend]+x}" ] || continue
       localvllm_use_backend "$backend" || continue
       start_localvllm || true
@@ -625,6 +679,7 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     echo "Error: could not stop $BACKEND; refusing to modify its environment." >&2
     # Bring any already-stopped backends back before leaving.
     for OTHER in "${UPDATE_BACKENDS[@]}"; do
+      [ "$START_AFTER_UPDATE" = 1 ] || continue
       [ -n "${WAS_RUNNING[$OTHER]+x}" ] || continue
       localvllm_use_backend "$OTHER" || continue
       localvllm_service_is_active || start_localvllm || true
@@ -658,16 +713,22 @@ if [ "$SCRIPTS_CHANGE" -eq 1 ]; then
   fi
 fi
 
+if [ "$ROUTER_CHANGE" = 1 ]; then
+  install -m755 "$STAGED_ROUTER" "$BIN_DIR/llama-swap.next"
+  mv -f "$BIN_DIR/llama-swap.next" "$BIN_DIR/llama-swap"
+fi
+
 ###############################################################################
 # REBUILD LAUNCHERS
 ###############################################################################
 
-if [ "$SCRIPTS_CHANGE" -eq 1 ] || [ "$ANY_PACKAGE_CHANGE" -eq 1 ]; then
+if [ "$SCRIPTS_CHANGE" -eq 1 ] || [ "$ANY_PACKAGE_CHANGE" -eq 1 ] || [ "$ROUTER_CHANGE" = 1 ]; then
   for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     localvllm_use_backend "$BACKEND" || continue
-    if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" >/dev/null 2>&1; then
+    localvllm_backend_installed "$BACKEND" || continue
+    if localvllm_require_start_model >/dev/null 2>&1; then
       "$BIN_DIR/rebuild-config.sh" --backend "$BACKEND" >/dev/null ||
-        warn "could not rebuild the $BACKEND launcher; run localvllm --backend $BACKEND reload"
+        fail "could not rebuild the $BACKEND launcher; restoring the previous installation"
     fi
   done
 fi
