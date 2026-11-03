@@ -26,6 +26,30 @@ conveniences of [Local AI Server](https://github.com/hossbit/local-ai-server)
 suggestions, benchmarks, systemd — but uses vLLM's native server instead of
 llama.cpp/llama-swap.
 
+## Get started
+
+On a supported Linux computer with an NVIDIA GPU and working driver, run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | bash
+```
+
+The installer automatically creates the Python environment and installs the text
+engine; you do not need to install vLLM yourself. It may ask for sudo and can
+take time and disk space. Then open a new terminal and run:
+
+```bash
+localvllm setup
+```
+
+The guided setup helps you choose text or multimodal, installs the multimodal
+engine if needed, and asks for a model. Model weights download on first start;
+choose a model that fits your GPU. Use `localvllm status` to check the server
+and `localvllm ui` to find its API documentation. The project currently provides
+a command-line interface and API documentation, not a graphical chat app.
+
+For AMD, CPU, or other advanced setups, see Requirements and Install below.
+
 ## Why Local AI Server for vLLM?
 
 | Feature | **This project** | Raw vLLM | Ollama | LM Studio |

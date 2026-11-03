@@ -10,6 +10,7 @@ Backends (isolated venv, models, port, keys, and service):
   all         both backends, where the command supports it
 
 Commands:
+  setup                  Guided setup: choose a backend and model
   start [BACKEND|all]    Start one or both services
   stop [BACKEND|all]     Stop one or both services and release GPU memory
   restart [BACKEND|all]  Restart one or both services
@@ -438,4 +439,52 @@ doctor_cmd() {
   fi
   echo "No errors, $DOCTOR_WARNINGS warning(s)."
   return 0
+}
+
+# Interactive onboarding uses the existing installer and model/service paths.
+setup_cmd() {
+  local choice backend model answer
+  [ "$#" -eq 0 ] || fail "usage: localvllm setup"
+  [ -t 0 ] && [ -t 1 ] || fail "setup needs an interactive terminal; use 'localvllm backend install', 'localvllm use', and 'localvllm start' in scripts"
+  echo
+  echo "Welcome to Local AI Server"
+  echo "1) Text, embeddings and reranking (recommended)"
+  echo "2) Multimodal models (image, audio and video)"
+  printf 'Choose 1 or 2 [1]: '
+  read -r choice || return 1
+  case "${choice:-1}" in
+    1) backend=vllm ;;
+    2) backend=omni ;;
+    *) echo "Please run setup again and choose 1 or 2." >&2; return 2 ;;
+  esac
+  localvllm_use_backend "$backend" || return 1
+  if ! localvllm_backend_installed "$backend"; then
+    echo
+    echo "The selected engine needs to be downloaded and installed. This can take time and disk space."
+    printf 'Install it now? [Y/n]: '
+    read -r answer || return 1
+    case "$answer" in ''|y|Y|yes|YES) ;; *) echo "Setup stopped. Run 'localvllm setup' when ready."; return 0 ;; esac
+    backend_install_cmd "$backend" || return 1
+    localvllm_use_backend "$backend" || return 1
+  fi
+  echo
+  echo "Enter a Hugging Face model ID (for example: Qwen/Qwen3-8B),"
+  echo "or a model name already listed by 'localvllm --backend $backend models'."
+  echo "Choose a model compatible with your hardware and selected engine."
+  printf 'Model (leave empty to finish later): '
+  read -r model || return 1
+  if [ -z "$model" ]; then
+    echo "Engine ready. Run 'localvllm setup' to choose a model later."
+    return 0
+  fi
+  use_cmd "$model" || return 1
+  printf 'Start the server now? [Y/n]: '
+  read -r answer || return 1
+  case "$answer" in
+    ''|y|Y|yes|YES)
+      service_cmd start "$backend" || return 1
+      echo "Run 'localvllm --backend $backend ui' for the API and documentation URLs."
+      ;;
+    *) echo "Start later with: localvllm start $backend" ;;
+  esac
 }

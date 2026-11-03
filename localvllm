@@ -104,12 +104,15 @@ else
 fi
 
 case "$COMMAND" in
-  start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
+  setup|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
     localvllm_acquire_global_lock
     ;;
 esac
 
 case "$COMMAND" in
+  setup)
+    setup_cmd "$@"
+    ;;
   start|stop|restart)
     service_cmd "$COMMAND" "$@"
     ;;
