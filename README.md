@@ -30,6 +30,27 @@ conveniences of [Local AI Server](https://github.com/hossbit/local-ai-server)
 suggestions, benchmarks, systemd — but uses vLLM's native server instead of
 llama.cpp/llama-swap.
 
+<div align="center">
+  <a href="https://github.com/hossbit/local-ai-server-vllm/releases/latest"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-release.svg" alt="Latest release" height="68"></a>
+  <a href="https://github.com/hossbit/local-ai-server-vllm/pulse"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-download.svg" alt="Recorded repository clones" height="68"></a>
+  <a href="https://github.com/hossbit/local-ai-server-vllm/stargazers"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-stars.svg" alt="GitHub stars" height="68"></a>
+</div>
+
+The clone badge counts recorded repository clones, not unique users or release
+asset downloads. Its total starts when badge tracking began.
+
+## ❤️ Support
+
+If you find Local vLLM useful, you can support its continued development:
+
+<div align="center">
+  <a href="https://buymeacoffee.com/mirhh">
+    <img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/bmc-button.webp" alt="Buy me a coffee" width="300">
+  </a>
+</div>
+
+⭐ Starring and sharing the repository also helps.
+
 ## Get started
 
 On a supported Linux computer with an NVIDIA GPU and working driver, run:
@@ -135,10 +156,6 @@ models, backend configuration, API examples, updates, and troubleshooting.
 - [Configuration](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#configuration) · [Troubleshooting](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#troubleshooting)
 - [vLLM documentation](https://docs.vllm.ai/) · [vLLM-Omni documentation](https://docs.vllm.ai/projects/vllm-omni/)
 - [Report an issue](https://github.com/hossbit/local-ai-server-vllm/issues)
-
-## Support
-
-If this project is useful, you can [support its development](https://buymeacoffee.com/mirhh).
 
 ## License
 
