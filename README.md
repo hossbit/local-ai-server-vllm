@@ -80,29 +80,31 @@ For AMD, CPU, ARM64, or advanced setups, see the [installation guide](https://gi
 
 ## Why Local AI Server for vLLM?
 
-Compare this managed vLLM server with running vLLM directly, SGLang's
-server-focused inference framework, and Ollama's local model runner.
+Compare this managed vLLM server with vLLM, SGLang, Ollama, and Unsloth.
+Unsloth also focuses on model training, while this project focuses on serving.
 
-| Feature | **locallvllm** | Raw vLLM | SGLang | Ollama |
-| --- | :---: | :---: | :---: | :---: |
-| Easy setup | ✅ Guided CLI | ⚠️ Manual | ⚠️ Manual | ✅ Simple CLI |
-| Text and multimodal | ✅ vLLM + Omni | ✅ Supported models | ✅ Supported models | ✅ Supported models |
-| OpenAI-compatible API | ✅ | ✅ | ✅ | ✅ Subset |
-| Linux service | ✅ Managed | ⚠️ Configure | ⚠️ Configure | ✅ Service |
-| Separate vLLM + Omni | ✅ Managed | ⚠️ Separate setup | — Different engine | — Different engine |
-| Monitoring | ✅ CLI + metrics | ✅ Metrics + tools | ✅ Server tools | ✅ CLI + API |
-| Staged update rollback | ✅ Built in | ⚠️ Self-managed | ⚠️ Self-managed | — |
+| Feature | **locallvllm** | Raw vLLM | SGLang | Ollama | Unsloth |
+| --- | :---: | :---: | :---: | :---: | :---: |
+| Easy setup | ✅ Guided CLI | ⚠️ Manual | ⚠️ Manual | ✅ Simple CLI | ✅ Studio UI |
+| Text and multimodal | ✅ vLLM + Omni | ✅ Supported models | ✅ Supported models | ✅ Supported models | ✅ Supported models |
+| OpenAI-compatible API | ✅ | ✅ | ✅ | ✅ Subset | ✅ Studio |
+| Fine-tuning | — External tools | — External tools | ⚠️ Training integrations | — External tools | ✅ Built in |
+| Linux service | ✅ Managed | ⚠️ Configure | ⚠️ Configure | ✅ Service | ⚠️ Configure |
+| Separate vLLM + Omni | ✅ Managed | ⚠️ Separate setup | — Different engine | — Different engine | — Different workflow |
+| Monitoring | ✅ CLI + metrics | ✅ Metrics + tools | ✅ Server tools | ✅ CLI + API | ✅ Training UI |
+| Staged update rollback | ✅ Built in | ⚠️ Self-managed | ⚠️ Self-managed | — | — |
 
 ✅ Available or included · ⚠️ Requires extra setup or management · — Not a
-matching feature in this comparison.
+matching feature here or handled by separate tools.
 
 API endpoints, model support, hardware requirements, and performance vary by
 version and configuration. Model downloads need network access; local inference
 can run offline once the required files are available.
 
 Sources: [vLLM documentation](https://docs.vllm.ai/),
-[SGLang documentation](https://sgl-project.github.io/), and
-[Ollama documentation](https://docs.ollama.com/).
+[SGLang documentation](https://sgl-project.github.io/),
+[Ollama documentation](https://docs.ollama.com/), and
+[Unsloth](https://github.com/unslothai/unsloth).
 
 ### Main advantage
 
