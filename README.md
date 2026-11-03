@@ -84,8 +84,8 @@ when needed. Choose a model supported by that engine and sized for your GPU.
 
 Change modes from the menu, or run `localvllm mode swap` / `localvllm mode direct`.
 Use `--backend omni` for Omni. Model files and settings are shared between modes;
-llama-swap is downloaded only when enabled. `localvllm ui` prints the appropriate
-API documentation or dashboard URL. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
+llama-swap is downloaded only when enabled. `localvllm ui --open` opens the
+API documentation or model dashboard for the current mode. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
 
 Already installed and Omni reports a Python error? Run `localvllm update
 --scripts-only`, then retry `localvllm backend install omni`.
@@ -151,7 +151,7 @@ localvllm update --all          # Every installed backend
 localvllm models                # List models
 localvllm start                 # Start the server
 localvllm stop                  # Stop the server
-localvllm ui                    # Print API and documentation URLs
+localvllm ui --open             # Open API docs or the model dashboard
 localvllm doctor all            # Diagnose both backends
 localvllm backend install omni  # Add vLLM-Omni later
 ```
