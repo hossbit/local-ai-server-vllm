@@ -52,47 +52,25 @@ For AMD, CPU, or other advanced setups, see Requirements and Install below.
 
 ## Why Local AI Server for vLLM?
 
-The best choice depends on whether you want a managed Linux server, direct
-control of vLLM, a simple local model runner, or a desktop chat application.
-This project is a manager built on vLLM, so its serving capabilities and
-hardware requirements depend on the installed vLLM and vLLM-Omni versions.
+Compare this managed vLLM server with running vLLM directly, SGLang's
+server-focused inference framework, and Ollama's local model runner.
 
-| Getting started | **This project** | Raw vLLM | Ollama | LM Studio |
+| Feature | **This project** | Raw vLLM | SGLang | Ollama |
 | --- | --- | --- | --- | --- |
-| Primary experience | Guided CLI for a Linux server | Python/CLI server for developers | CLI and local model service | Desktop app, CLI, and headless daemon |
-| Setup | Installer sets up vLLM; `localvllm setup` guides model selection | Install and configure vLLM | Install Ollama and run a model | Install desktop app or `llmster` |
-| Desktop chat UI included | No; connect an API client | No built-in desktop app | Desktop app available | Yes |
-| Operating systems | Linux | Primarily Linux; hardware and install method vary | Linux, macOS, Windows | Linux, macOS, Windows; hardware requirements vary |
-| Headless Linux server | Yes; systemd user services | Yes; configure service separately | Yes; Linux service | Yes; `llmster` and systemd setup |
-| Choose and download models | Hugging Face ID or local model; download on first start | Hugging Face ID or local model | Model library and supported imports | In-app, CLI, or API download |
-| Fully local inference | Yes, after dependencies and model are available | Yes, after setup and model download | Yes for local models; cloud models are also offered | Yes for downloaded local models |
+| Best for | Easier vLLM server management | Direct vLLM control | Scalable model serving | Simple local model running |
+| Setup | Guided CLI; installs the engine | Manual installation and configuration | Manual installation and configuration | Install and run a model |
+| Text and multimodal | vLLM + optional vLLM-Omni | Supported vLLM models; Omni separate | Supported models; Omni separate | Depends on model |
+| OpenAI-compatible API | Yes | Yes | Yes | Yes; subset |
+| Linux service management | Built-in service setup and CLI | Configure separately | Configure separately | Linux service |
+| Monitoring and recovery | Status, logs, benchmark, metrics and update rollback | Metrics and benchmark tools | Server monitoring tools | CLI and API information |
 
-| Serving and operations | **This project** | Raw vLLM | Ollama | LM Studio |
-| --- | --- | --- | --- | --- |
-| Inference engine | vLLM; optional separate vLLM-Omni | vLLM | Ollama model runtime | Configurable runtimes, including llama.cpp |
-| Multimodal models | vLLM or Omni, depending on model and backend | Supported models and modalities vary | Supported models and modalities vary | Supported models and modalities vary |
-| Separate plain and Omni environments | Managed separately with own ports, models and keys | Set up separate vLLM and Omni servers manually | Different runtime; no equivalent managed pair | Different runtime; no equivalent managed pair |
-| Model tuning | Shared defaults and per-model override files | Server and model arguments | Modelfiles and API options | App, CLI, and API settings |
-| OpenAI-compatible API | Yes; endpoint coverage depends on vLLM version | Yes; endpoint coverage varies | Yes; a subset of the API | Yes; supported endpoints vary |
-| API authentication | Optional key per backend; see [Security](#security) | API key option | Local API ignores the OpenAI client key | Optional API tokens |
-| Monitoring | CLI status, health, logs, benchmark, and vLLM metrics | API health, logs, metrics, and benchmark tools | CLI and API information | App, CLI, and API information |
-| Updates and recovery | Manager update with staged environment upgrades and rollback | Manage upgrades and recovery yourself | Application update workflow | Application and daemon update workflows |
-| Best fit | Managed vLLM / Omni on a Linux server | Direct control over vLLM deployment | Simple local model running | Desktop chat and model management |
+API endpoints, model support, hardware requirements, and performance vary by
+version and configuration. Model downloads need network access; local inference
+can run offline once the required files are available.
 
-**Reading the comparison:** API compatibility does not mean every OpenAI
-endpoint or feature is supported. Model formats, modalities, performance, and
-hardware support depend on the selected model, runtime, and version. Local
-inference has no per-request API fee from these tools, but hardware, electricity,
-and optional cloud services can have costs. Downloads need network access;
-local-only operation and privacy depend on your configuration and clients.
-
-References: [vLLM API server](https://docs.vllm.ai/en/latest/serving/openai_compatible_server/),
-[vLLM metrics](https://docs.vllm.ai/en/latest/design/metrics/),
-[Ollama API compatibility](https://docs.ollama.com/api/openai-compatibility),
-[Ollama Modelfiles](https://docs.ollama.com/modelfile),
-[LM Studio headless server](https://lmstudio.ai/docs/developer/core/headless),
-[LM Studio API compatibility](https://lmstudio.ai/docs/developer/openai-compat), and
-[LM Studio authentication](https://lmstudio.ai/docs/developer/core/authentication).
+Sources: [vLLM documentation](https://docs.vllm.ai/),
+[SGLang documentation](https://sgl-project.github.io/), and
+[Ollama documentation](https://docs.ollama.com/).
 
 ### Main advantage
 
