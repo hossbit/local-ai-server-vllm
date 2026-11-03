@@ -20,7 +20,9 @@ pull_cmd() {
   [ "$#" -gt 0 ] || fail 'usage: localvllm pull ORG/MODEL [--revision REF]'
   shift
   if [ "$#" -gt 0 ]; then
-    [ "$#" = 2 ] && [ "$1" = --revision ] || fail 'usage: localvllm pull ORG/MODEL [--revision REF]'
+    if [ "$#" != 2 ] || [ "$1" != --revision ]; then
+      fail 'usage: localvllm pull ORG/MODEL [--revision REF]'
+    fi
     revision="$2"
     [ -n "$revision" ] || fail 'revision cannot be empty'
   fi
@@ -174,6 +176,8 @@ menu_loop() {
 
 menu_cmd() {
   [ "$#" = 0 ] || fail 'usage: localvllm menu'
-  [ -t 0 ] && [ -t 1 ] || fail "menu needs an interactive terminal; scripts can use 'localvllm pull', 'add', 'use', 'start', and 'mode'"
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    fail "menu needs an interactive terminal; scripts can use 'localvllm pull', 'add', 'use', 'start', and 'mode'"
+  fi
   menu_loop
 }
