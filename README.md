@@ -1,6 +1,10 @@
 # Local AI Server for vLLM
 
 <div align="center">
+  <img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-hero.webp" alt="Local vLLM: two engines, one simple CLI" width="900">
+</div>
+
+<div align="center">
 
 ![Linux](https://img.shields.io/badge/Linux-x86--64%20%7C%20ARM64-111827)
 ![vLLM](https://img.shields.io/badge/Engine-vLLM-6C5CE7)
