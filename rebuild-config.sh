@@ -390,7 +390,11 @@ VLLM_ARGS+=(--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
 [ -z "$MAX_NUM_SEQS" ] || VLLM_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS")
 [ -z "$MAX_NUM_BATCHED_TOKENS" ] || VLLM_ARGS+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
 [ -z "$KV_CACHE_DTYPE" ] || VLLM_ARGS+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
-[ -z "$SWAP_SPACE" ] || VLLM_ARGS+=(--swap-space "$SWAP_SPACE")
+# Legacy CPU swap was removed from current vLLM. Keep reading old settings
+# so existing configuration files migrate without producing an invalid CLI.
+if [ -n "$SWAP_SPACE" ]; then
+  echo "Warning: SWAP_SPACE is obsolete and ignored; current vLLM no longer accepts --swap-space." >&2
+fi
 [ "${CPU_OFFLOAD_GB:-0}" = "0" ] || VLLM_ARGS+=(--cpu-offload-gb "$CPU_OFFLOAD_GB")
 [ "$ENFORCE_EAGER" = "0" ] || VLLM_ARGS+=(--enforce-eager)
 [ "$TRUST_REMOTE_CODE" = "0" ] || VLLM_ARGS+=(--trust-remote-code)
