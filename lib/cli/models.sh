@@ -21,6 +21,27 @@ router_model_states() {
     end' <<< "$payload"
 }
 
+# Shared snapshot for model lists, status, version, and the interactive menu.
+model_runtime_info() {
+  local mode selected="" service=stopped states='{}' known=true active='[]'
+  mode="$(localvllm_serving_mode)" || return 1
+  if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" 2>/dev/null; then selected="$ACTIVE_ID"; fi
+  if service_is_active; then
+    service=running
+    if [ "$mode" = swap ]; then
+      if ! states="$(router_model_states 2>/dev/null)"; then states='{}'; known=false; fi
+      active="$(jq -c '[to_entries[] | select(.value == "loaded") | .key]' <<< "$states")"
+    elif ! active="$(api_models 2>/dev/null | jq -Rsc 'split("\n") | map(select(length > 0))')" || [ "$active" = '[]' ]; then
+      active='[]'; known=false
+    fi
+  fi
+  jq -cn --arg mode "$mode" --arg selected "$selected" --arg service "$service" \
+    --argjson states "$states" --argjson known "$known" --argjson active "$active" \
+    '{mode:$mode,direct_model:$selected,service:$service,states:$states,
+      runtime_state_available:$known,active_models:$active,
+      active_model:(if ($active|length)==1 then $active[0] else "" end)}'
+}
+
 models_cmd() {
   local active_id="" served="" use_color_flag=0 selector json=0 paths=0
   local -a col_model=() col_source=() col_format=() col_type=() col_size=() col_active=()
@@ -28,7 +49,7 @@ models_cmd() {
   local w_model=5 w_source=6 w_format=6 w_type=4 w_size=4 w_active=6
   local id source model format path size_display active_display i model_type arg
   local service_state="not installed" entries mode column=SELECTED divider=--------
-  local runtime_known=true state_json='{}' runtime_id runtime_state loaded_ids="" actual_active=""
+  local snapshot runtime_known=true state_json='{}' runtime_id runtime_state loaded_ids="" actual_active=""
   local -A runtime_states=()
 
   for arg in "$@"; do
@@ -57,14 +78,14 @@ models_cmd() {
 
   entries="$(localvllm_model_entries "$MODELS_DIR" "$OVERRIDES_DIR" 2>/dev/null)"
 
-  mode="$(localvllm_serving_mode)" || return 1
+  snapshot="$(model_runtime_info)" || return 1
+  mode="$(jq -r .mode <<< "$snapshot")"
+  runtime_known="$(jq -r .runtime_state_available <<< "$snapshot")"
+  state_json="$(jq -c .states <<< "$snapshot")"
+  actual_active="$(jq -r .active_model <<< "$snapshot")"
+  served="$actual_active"
   if [ "$mode" = swap ]; then
     column=STATE; divider=-----
-    if [ "$service_state" = running ]; then
-      if ! state_json="$(router_model_states 2>/dev/null)"; then
-        state_json='{}'; runtime_known=false
-      fi
-    fi
     while IFS=$'\t' read -r runtime_id runtime_state; do
       [ -n "$runtime_id" ] || continue
       runtime_states["$runtime_id"]="$runtime_state"
@@ -76,13 +97,11 @@ models_cmd() {
 
   if [ "$json" -eq 1 ]; then
     command -v jq >/dev/null 2>&1 || fail "jq is required for --json output"
-    if [ "$mode" = direct ] && [ "$service_state" = "running" ] && command -v curl >/dev/null 2>&1; then
-      served="$(api_models 2>/dev/null | head -n1 || true)"
-    fi
     printf '%s\n' "$entries" | jq -R -s \
       --arg backend "$LOCALVLLM_BACKEND" \
       --arg mode "$mode" \
       --arg actual "$actual_active" \
+      --argjson runtime "$snapshot" \
       --argjson states "$state_json" \
       --argjson known "$runtime_known" \
       --arg label "$LOCALVLLM_BACKEND_LABEL" \
@@ -94,15 +113,14 @@ models_cmd() {
         split("\n")
         | map(select(length > 0) | split("\t") | {
             id: .[0], source: .[1], model: .[2], format: .[3], path: .[4],
-            active: (if $mode == "swap" then ($known and $states[.[0]] == "loaded") else .[0] == $active end),
+            active: (if $mode == "swap" then ($known and $states[.[0]] == "loaded") else (.[0] as $id | $runtime.active_models | index($id)) != null end),
             state: (if $mode == "swap" then (if $known then ($states[.[0]] // "unloaded") else "unavailable" end)
                     else (if .[0] == $active then "selected" else "available" end) end)
           })
         | {backend: $backend, mode: $mode, label: $label, models_dir: $dir, cache_dir: $cache,
-           active_model: (if $mode == "swap" then $actual else $active end),
-           active_models: (if $mode == "swap" then [$states | to_entries[] | select(.value == "loaded") | .key]
-                           else (if $active == "" then [] else [$active] end) end),
-           direct_model: $active, runtime_state_available: (if $mode == "swap" then $known else null end),
+           active_model: $runtime.active_model,
+           active_models: $runtime.active_models,
+           direct_model: $active, runtime_state_available: $known,
            service: $service, served_model: $served, models: .}
       '
     return 0
@@ -118,12 +136,14 @@ models_cmd() {
 
   if [ ! -d "$MODELS_DIR" ]; then
     echo "Models directory does not exist: $MODELS_DIR"
+    echo "Service: $service_state"
     return 0
   fi
 
   if ! localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR"; then
     echo "No models found in $MODELS_DIR"
-    echo "Add a Hugging Face model directory, or run: localvllm use org/model"
+    echo "Download a model: localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL"
+    echo "Service: $service_state"
     return 0
   fi
 
@@ -200,7 +220,7 @@ models_cmd() {
     fi
     [ -z "$active_id" ] || echo "Selection for direct mode: $active_id"
   elif [ -n "$active_id" ]; then
-    echo "Active model: $active_id"
+    echo "Selected model: $active_id"
     if [ -n "$ACTIVE_OVERRIDE" ]; then
       echo "Override file: $ACTIVE_OVERRIDE"
     fi

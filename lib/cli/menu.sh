@@ -33,6 +33,7 @@ pull_cmd() {
     revision="$( (set +u; unset REVISION; . "$file"; printf '%s' "${REVISION:-main}") )"
   fi
   revision="${revision:-main}"
+  download_guidance
   echo "Downloading $model ($revision) for $LOCALVLLM_BACKEND; existing cached files are reused."
   if ! snapshot="$(HF_HOME="${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}" HF_TOKEN="${LOCALVLLM_HF_TOKEN:-${HF_TOKEN:-}}" \
     "$VENV_DIR/bin/python" - "$model" "$revision" <<'PY'
@@ -41,7 +42,8 @@ from huggingface_hub import snapshot_download
 print(snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2]))
 PY
   )"; then
-    echo 'Download failed. Check the model ID, disk space, network, and access token for gated models. Run the same command to resume.' >&2
+    echo 'Download failed. Run the same command to resume cached files.' >&2
+    download_guidance >&2
     return 1
   fi
   { [ -f "$snapshot/config.json" ] || [ -f "$snapshot/model_index.json" ]; } || { echo 'Downloaded repository is not a complete supported model folder (missing config.json or model_index.json).' >&2; return 1; }
@@ -91,12 +93,13 @@ menu_start_model() {
 }
 
 menu_loop() {
-  local choice id source model format path selected active state marker n value answer mode
+  local choice id source model format path selected active state marker n value answer mode runtime live
   local -a ids=()
   while true; do
     ids=(); active="$(cat "$ACTIVE_MODEL_FILE" 2>/dev/null || true)"
     state=stopped; service_is_active && state=running
     mode="$(localvllm_serving_mode)" || return 1
+    runtime="$(model_runtime_info)" || return 1
     echo
     echo "Local vLLM | $LOCALVLLM_BACKEND_LABEL | $mode | $state"
     echo "Model folders: $MODELS_DIR"
@@ -106,10 +109,15 @@ menu_loop() {
       ids+=("$id"); n=$((n + 1)); marker='not downloaded'
       [ ! -d "$path" ] || marker='local files'
       if [ "$mode" = direct ] && [ "$id" = "$active" ]; then marker="$marker, selected"; fi
-      printf '  %s) %s [%s]\n' "$n" "$id" "$marker"
+      if [ "$mode" = swap ]; then
+        live="$(jq -r --arg id "$id" 'if .runtime_state_available then (.states[$id] // "unloaded") else "unavailable" end' <<< "$runtime")"
+        marker="$marker, $live"
+      fi
+      printf '  %s) %s [%s]\n'  "$n" "$id" "$marker"
     done < <(localvllm_model_entries "$MODELS_DIR" "$OVERRIDES_DIR")
     [ "$n" -gt 0 ] || echo '  No models yet. Download one or add an existing folder.'
     echo '  d) Download a Hugging Face model     a) Add an existing model folder'
+    echo '  e) Example models and requirements'
     echo '  r) Start server                     s) Stop server'
     echo '  b) Choose vLLM or Omni              m) Direct or automatic switching'
     echo '  i) API and storage details          t) Advanced model settings'
@@ -120,6 +128,7 @@ menu_loop() {
     read -r choice || return 0
     case "$choice" in
       q|Q) return 0 ;;
+      e|E) model_examples ;;
       d|D)
         printf 'Hugging Face model ID (ORG/MODEL; empty cancels): '
         read -r value || return 0
@@ -184,4 +193,34 @@ menu_cmd() {
     fail "menu needs an interactive terminal; scripts can use 'localvllm pull', 'add', 'use', 'start', and 'mode'"
   fi
   menu_loop
+}
+
+# Estimates describe unquantized weight storage, not total inference memory.
+model_examples() {
+  if [ "$LOCALVLLM_BACKEND" = omni ]; then
+    echo 'Omni example: Qwen/Qwen2.5-Omni-3B — audio/vision; roughly 6 GB of BF16 core weights.'
+    echo 'https://huggingface.co/Qwen/Qwen2.5-Omni-3B'
+    echo 'Multi-stage generation needs extra memory and the matching upstream deployment recipe:'
+    echo 'https://docs.vllm.ai/projects/vllm-omni/en/latest/models/supported_models/'
+  else
+    echo 'Chat example: Qwen/Qwen3-4B — roughly 8 GB of BF16 weights.'
+    echo 'https://huggingface.co/Qwen/Qwen3-4B'
+    echo 'Small chat example: Qwen/Qwen3-0.6B — roughly 1.2 GB of BF16 weights.'
+    echo 'https://huggingface.co/Qwen/Qwen3-0.6B'
+  fi
+  echo 'Inference needs additional memory for caches and runtime; context and concurrency increase it.'
+  echo "Download: localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL"
+  echo 'Custom Hugging Face IDs and existing model folders are also supported.'
+}
+
+download_guidance() {
+  local cache="${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}" probe
+  probe="$cache"
+  while [ ! -d "$probe" ] && [ "$probe" != / ]; do probe="$(dirname "$probe")"; done
+  echo "Download cache: $cache"
+  df -h --output=avail,target "$probe" 2>/dev/null || true
+  echo 'Allow space for all repository files; downloads reuse cached files.'
+  echo 'Gated/private model: accept access conditions on its Hugging Face page first.'
+  echo 'Provide a read token through HF_TOKEN or LOCALVLLM_HF_TOKEN in your environment.'
+  echo 'If access is denied, check your account permissions; for connection errors, check your network.'
 }

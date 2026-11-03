@@ -199,7 +199,7 @@ version_cmd() {
 }
 
 version_one() {
-  local vllm_version omni_version py_version active_id active_model port
+  local vllm_version omni_version py_version active_id active_model port runtime loaded
 
   echo
   echo "== $LOCALVLLM_BACKEND ($LOCALVLLM_BACKEND_LABEL) =="
@@ -221,10 +221,18 @@ version_one() {
   if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" 2>/dev/null; then
     active_id="$ACTIVE_ID"
     active_model="$ACTIVE_MODEL"
-    echo "Active model: $active_id ($ACTIVE_FORMAT)"
+    echo "Selected for direct mode: $active_id ($ACTIVE_FORMAT)"
     echo "Model path/id: $active_model"
   else
-    echo "Active model: none"
+    echo "Selected for direct mode: none"
+  fi
+
+  runtime="$(model_runtime_info)" || return 1
+  if [ "$(jq -r .runtime_state_available <<< "$runtime")" = true ]; then
+    loaded="$(jq -r '.active_models | join(", ")' <<< "$runtime")"
+    echo "Loaded models: ${loaded:-none}"
+  else
+    echo "Loaded models: unavailable (check service/API access)"
   fi
 
   port="$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"

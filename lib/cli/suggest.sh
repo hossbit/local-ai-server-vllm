@@ -63,8 +63,8 @@ suggest_for_model() {
     echo "    MAX_NUM_SEQS=256"
     echo
     echo "  Download it first for hardware-specific advice:"
-    echo "    hf download '$model'"
-    echo "  then point MODEL at the downloaded directory and run suggest again."
+    echo "    localvllm --backend $LOCALVLLM_BACKEND pull '$model'"
+    echo "  then run localvllm suggest again for the registered model."
     return 0
   fi
 

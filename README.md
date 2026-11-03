@@ -83,8 +83,9 @@ when needed. Choose a model supported by that engine and sized for your GPU.
 | **Automatic switching (optional)** | llama-swap loads the requested model behind the same API address, with a model dashboard. |
 
 Change modes from the menu, or run `localvllm mode swap` / `localvllm mode direct`.
-`localvllm models` shows live model states in automatic mode and your selected
-model in direct mode. This works for both vLLM and Omni.
+The menu, `localvllm models`, `status --json`, and `version` distinguish loaded
+models from your saved selection for both vLLM and Omni. The menu also offers
+example models and download guidance.
 Use `--backend omni` for Omni. Model files and settings are shared between modes;
 llama-swap is downloaded only when enabled. `localvllm ui --open` opens the
 API documentation or model dashboard for the current mode. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
