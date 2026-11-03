@@ -146,7 +146,7 @@ menu_loop() {
         printf 'Model ID (empty cancels): '; read -r value || return 0
         [ -n "$value" ] || continue
         printf 'Remove this registration? [y/N]: '; read -r answer || return 0
-        case "$answer" in y|Y|yes) menu_run remove "$value" ;; esac ;;
+        case "$answer" in y|Y|yes) menu_run remove "$value" || echo 'Removal failed; see the guidance above.' ;; esac ;;
       d|D)
         printf 'Hugging Face model ID (ORG/MODEL; empty cancels): '
         read -r value || return 0
