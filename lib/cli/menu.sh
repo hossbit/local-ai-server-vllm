@@ -52,7 +52,7 @@ PY
   localvllm_link_cached_model "$model" "$revision"
   echo "Downloaded: $model"
   echo "Files: $snapshot"
-  if [ "$(localvllm_serving_mode)" = swap ]; then apply_config_change; fi
+  echo "Registered. Run localvllm --backend $LOCALVLLM_BACKEND reload to refresh automatic routing when ready."
 }
 
 add_cmd() {
@@ -66,7 +66,7 @@ add_cmd() {
   id="$(basename "$path")"
   model_register "$id" "$path" || return 1
   echo "Added $id from $path. Files were not moved or copied."
-  if [ "$(localvllm_serving_mode)" = swap ]; then apply_config_change; fi
+  echo "Registered. Run localvllm --backend $LOCALVLLM_BACKEND reload to refresh automatic routing when ready."
 }
 
 menu_run() {
@@ -99,7 +99,8 @@ menu_loop() {
     ids=(); active="$(cat "$ACTIVE_MODEL_FILE" 2>/dev/null || true)"
     state=stopped; service_is_active && state=running
     mode="$(localvllm_serving_mode)" || return 1
-    runtime="$(model_runtime_info)" || return 1
+    runtime='{"states":{},"runtime_state_available":false}'
+    if [ "$mode" = swap ]; then runtime="$(model_runtime_info)" || return 1; fi
     echo
     echo "Local vLLM | $LOCALVLLM_BACKEND_LABEL | $mode | $state"
     echo "Model folders: $MODELS_DIR"
@@ -117,8 +118,9 @@ menu_loop() {
     done < <(localvllm_model_entries "$MODELS_DIR" "$OVERRIDES_DIR")
     [ "$n" -gt 0 ] || echo '  No models yet. Download one or add an existing folder.'
     echo '  d) Download a Hugging Face model     a) Add an existing model folder'
-    echo '  e) Example models and requirements'
+    echo '  e) Download an example model        x) Remove model registration'
     echo '  r) Start server                     s) Stop server'
+    echo '  c) Apply registered models (may restart server)'
     echo '  b) Choose vLLM or Omni              m) Direct or automatic switching'
     echo '  i) API and storage details          t) Advanced model settings'
     if [ "$mode" = swap ]; then echo '  w) Open model dashboard'; else echo '  w) Open API documentation'; fi
@@ -128,7 +130,23 @@ menu_loop() {
     read -r choice || return 0
     case "$choice" in
       q|Q) return 0 ;;
-      e|E) model_examples ;;
+      c|C) menu_run reload || echo 'Reload failed; see the error above.' ;;
+      e|E)
+        model_examples
+        printf 'Download example number (empty cancels): '; read -r value || return 0
+        id=""
+        if [ "$LOCALVLLM_BACKEND" = omni ]; then
+          [ "$value" != 1 ] || id=Qwen/Qwen2.5-Omni-3B
+        else
+          case "$value" in 1) id=Qwen/Qwen3-4B ;; 2) id=Qwen/Qwen3-0.6B ;; esac
+        fi
+        if [ -n "$id" ] && menu_ensure_engine; then menu_run pull "$id" || echo 'Download failed; see the error above.'; fi ;;
+      x|X)
+        echo 'Remove registration and managed cache link only. Weight files and shared cache are preserved.'
+        printf 'Model ID (empty cancels): '; read -r value || return 0
+        [ -n "$value" ] || continue
+        printf 'Remove this registration? [y/N]: '; read -r answer || return 0
+        case "$answer" in y|Y|yes) menu_run remove "$value" ;; esac ;;
       d|D)
         printf 'Hugging Face model ID (ORG/MODEL; empty cancels): '
         read -r value || return 0
@@ -198,14 +216,14 @@ menu_cmd() {
 # Estimates describe unquantized weight storage, not total inference memory.
 model_examples() {
   if [ "$LOCALVLLM_BACKEND" = omni ]; then
-    echo 'Omni example: Qwen/Qwen2.5-Omni-3B — audio/vision; roughly 6 GB of BF16 core weights.'
+    echo '1) Omni example: Qwen/Qwen2.5-Omni-3B — audio/vision; roughly 6 GB of BF16 core weights.'
     echo 'https://huggingface.co/Qwen/Qwen2.5-Omni-3B'
     echo 'Multi-stage generation needs extra memory and the matching upstream deployment recipe:'
     echo 'https://docs.vllm.ai/projects/vllm-omni/en/latest/models/supported_models/'
   else
-    echo 'Chat example: Qwen/Qwen3-4B — roughly 8 GB of BF16 weights.'
+    echo '1) Chat example: Qwen/Qwen3-4B — roughly 8 GB of BF16 weights.'
     echo 'https://huggingface.co/Qwen/Qwen3-4B'
-    echo 'Small chat example: Qwen/Qwen3-0.6B — roughly 1.2 GB of BF16 weights.'
+    echo '2) Small chat example: Qwen/Qwen3-0.6B — roughly 1.2 GB of BF16 weights.'
     echo 'https://huggingface.co/Qwen/Qwen3-0.6B'
   fi
   echo 'Inference needs additional memory for caches and runtime; context and concurrency increase it.'
@@ -223,4 +241,26 @@ download_guidance() {
   echo 'Gated/private model: accept access conditions on its Hugging Face page first.'
   echo 'Provide a read token through HF_TOKEN or LOCALVLLM_HF_TOKEN in your environment.'
   echo 'If access is denied, check your account permissions; for connection errors, check your network.'
+}
+
+remove_cmd() {
+  local id="${1:-}" file link backup
+  [ "$#" = 1 ] || fail 'usage: localvllm remove MODEL'
+  file="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id")" || return 1
+  [ -f "$file" ] || fail 'No registration found. Move manually managed folders outside the model library to stop discovering them.'
+  [ "$(cat "$ACTIVE_MODEL_FILE" 2>/dev/null || true)" != "$id" ] || fail 'Select another direct-mode model before removing this one.'
+  if service_is_active; then fail 'Stop this backend before removing a registration.'; fi
+  link="$MODELS_DIR/$(localvllm_safe_id "$id")"
+  if [ -e "$link" ] && [ ! -L "$link" ]; then fail 'Move this model folder outside the library first; its files were preserved.'; fi
+  backup="$(mktemp -d "$CONF_DIR/removed-model.XXXXXX")" || return 1
+  cp -a "$file" "$backup/registration.conf" || return 1
+  if [ -L "$link" ]; then
+    case "$(readlink -f "$link")" in
+      "${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}"/hub/models--*/snapshots/*) mv "$link" "$backup/library-link" || return 1 ;;
+      *) fail 'This is a user-managed link. Move it outside the library first.' ;;
+    esac
+  fi
+  mv "$file" "$backup/original.conf" || return 1
+  echo "Removed registration: $id. Model weights and cache were preserved. Backup: $backup"
+  echo "Run localvllm --backend $LOCALVLLM_BACKEND reload before starting to refresh the launcher."
 }

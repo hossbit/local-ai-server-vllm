@@ -35,18 +35,26 @@ localvllm_apply_candidates() {
   local candidate_sh="$1"
   local candidate_env="$2"
 
+  local backup file was_active=0
+  backup="$(mktemp -d)" || return 1
   mkdir -p "$CONF_DIR"
-  install -m700 "$candidate_sh" "$SERVE_SH"
-  install -m600 "$candidate_env" "$SERVE_ENV"
-
-  if service_is_active; then
-    if ! service_cmd restart; then
-      echo "Error: the backend did not restart with the new configuration." >&2
-      return 1
-    fi
-  else
-    echo "Configuration updated; it will take effect on the next 'localvllm start'."
+  for file in "$SERVE_SH" "$SERVE_ENV"; do
+    if [ -f "$file" ]; then cp -a "$file" "$backup/$(basename "$file")" || return 1; fi
+  done
+  service_is_active && was_active=1
+  if ! install -m700 "$candidate_sh" "$SERVE_SH" ||
+     ! install -m600 "$candidate_env" "$SERVE_ENV" ||
+     { [ "$was_active" = 1 ] && { echo 'Restarting this backend to apply configuration; active requests may be interrupted.'; ! service_cmd restart; }; }; then
+    for file in "$SERVE_SH" "$SERVE_ENV"; do
+      if [ -f "$backup/$(basename "$file")" ]; then cp -a "$backup/$(basename "$file")" "$file"; else rm -f "$file"; fi
+    done
+    if [ "$was_active" = 1 ]; then service_cmd restart || echo 'Warning: previous configuration restored, but service recovery failed.' >&2; fi
+    rm -rf "$backup"
+    echo 'Error: configuration failed; previous launcher restored.' >&2
+    return 1
   fi
+  rm -rf "$backup"
+  [ "$was_active" = 1 ] || echo "Configuration updated; it will take effect on the next 'localvllm start'."
   return 0
 }
 

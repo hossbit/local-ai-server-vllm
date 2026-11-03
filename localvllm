@@ -107,7 +107,7 @@ else
 fi
 
 case "$COMMAND" in
-  mode|pull|add|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
+  mode|pull|add|remove|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
     localvllm_acquire_global_lock
     ;;
 esac
@@ -137,6 +137,7 @@ case "$COMMAND" in
   mode) mode_cmd "$@" ;;
   pull) pull_cmd "$@" ;;
   add) add_cmd "$@" ;;
+  remove) remove_cmd "$@" ;;
   models)
     models_cmd "$@"
     ;;

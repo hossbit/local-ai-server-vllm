@@ -14,6 +14,7 @@ Commands:
   setup                  Open the guided model menu
   pull ORG/MODEL         Download/register a model without changing the active one
   add /path/to/model     Register an existing folder without copying it
+  remove MODEL           Remove a stopped backend model registration; preserve weights
   mode [direct|swap]     Show/change this backend's serving mode
   start [BACKEND|all]    Start one or both services
   stop [BACKEND|all]     Stop one or both services and release GPU memory
@@ -119,7 +120,14 @@ print_service_details() {
   echo "  service: $LOCALVLLM_SERVICE_NAME"
   echo "  service file: $SERVICE_FILE"
   echo "  install dir: $AI_DIR"
-  echo "  model: ${active_id:-none}${active_model:+ ($active_model)}"
+  if [ "$(localvllm_serving_mode)" = swap ]; then
+    local runtime loaded
+    runtime="$(model_runtime_info)" || return 1
+    loaded="$(jq -r 'if .runtime_state_available then (.active_models | join(", ")) else "unavailable" end' <<< "$runtime")"
+    echo "  loaded models: ${loaded:-none}"
+  else
+    echo "  selected model: ${active_id:-none}${active_model:+ ($active_model)}"
+  fi
   echo "  API: http://${LOCALVLLM_LISTEN_HOST}:$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
   echo "  log: $LOG_FILE"
 }

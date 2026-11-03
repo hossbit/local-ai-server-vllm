@@ -85,7 +85,9 @@ when needed. Choose a model supported by that engine and sized for your GPU.
 Change modes from the menu, or run `localvllm mode swap` / `localvllm mode direct`.
 The menu, `localvllm models`, `status --json`, and `version` distinguish loaded
 models from your saved selection for both vLLM and Omni. The menu also offers
-example models and download guidance.
+selectable example models, download guidance, and removal of registrations while
+preserving weights. `pull` and `add` leave the running server alone; use `reload`
+to apply new registrations to automatic routing when ready.
 Use `--backend omni` for Omni. Model files and settings are shared between modes;
 llama-swap is downloaded only when enabled. `localvllm ui --open` opens the
 API documentation or model dashboard for the current mode. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
