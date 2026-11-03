@@ -24,6 +24,11 @@ services.
 The repository directory is `localaivllm`; the installed command is
 `localvllm`.
 
+Use it on a supported workstation or GPU server, including multi-GPU systems
+for large models. Context length, batching, GPU placement, and parallelism are
+configurable per model; the defaults are starting points. See the
+[large-model and multi-GPU guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#multi-gpu).
+
 This project is deliberately vLLM-only. It borrows the operational
 conveniences of [Local AI Server](https://github.com/hossbit/local-ai-server)
 — installer, CLI, model discovery, per-model overrides, API keys, doctor,
