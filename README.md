@@ -35,7 +35,7 @@ llama.cpp/llama-swap.
 On a supported Linux computer with an NVIDIA GPU and working driver, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | bash
+curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash
 ```
 
 The installer automatically creates the Python environment and installs the text
@@ -115,6 +115,9 @@ endpoint. For network access, use a TLS reverse proxy with authentication.
 Read the [security guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#security) before exposing a server.
 
 ## Documentation
+
+[Hossbit installer hub](https://hossbit.github.io/#localvllm) · [Install script](https://hossbit.github.io/localvllm/install.sh)
+
 
 **[Open the Local vLLM wiki guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md)** for installation options,
 models, backend configuration, API examples, updates, and troubleshooting.
