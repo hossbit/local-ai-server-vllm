@@ -77,6 +77,7 @@ fi
 
 # Global defaults. Environment exports of the short names are also honored so
 # one-off generation can be tried without editing the installed config.
+GLOBAL_ENGINE_DEFAULTS="${ENGINE_DEFAULTS:-$VLLM_ENGINE_DEFAULTS}"
 GLOBAL_TP="${TENSOR_PARALLEL_SIZE:-$VLLM_TENSOR_PARALLEL_SIZE}"
 GLOBAL_UTIL="${GPU_MEMORY_UTILIZATION:-$VLLM_GPU_MEMORY_UTILIZATION}"
 GLOBAL_MAX_LEN="${MAX_MODEL_LEN:-$VLLM_MAX_MODEL_LEN}"
@@ -127,6 +128,7 @@ if [ "$MODEL" != "$ACTIVE_MODEL" ]; then
   FORMAT="$(localvllm_detect_format "$MODEL")"
 fi
 
+ENGINE_DEFAULTS="${ENGINE_DEFAULTS:-$GLOBAL_ENGINE_DEFAULTS}"
 TENSOR_PARALLEL_SIZE="${TENSOR_PARALLEL_SIZE:-$GLOBAL_TP}"
 GPU_MEMORY_UTILIZATION="${GPU_MEMORY_UTILIZATION:-$GLOBAL_UTIL}"
 MAX_MODEL_LEN="${MAX_MODEL_LEN:-$GLOBAL_MAX_LEN}"
@@ -262,6 +264,7 @@ if [ -n "$TASK" ]; then
   validate_choice TASK "$TASK" auto generate embedding embed classify score reward transcription
 fi
 
+validate_bool ENGINE_DEFAULTS "$ENGINE_DEFAULTS"
 validate_positive_int TENSOR_PARALLEL_SIZE "$TENSOR_PARALLEL_SIZE"
 validate_float_0_1 GPU_MEMORY_UTILIZATION "$GPU_MEMORY_UTILIZATION"
 validate_optional_positive_int MAX_MODEL_LEN "$MAX_MODEL_LEN"
@@ -382,25 +385,34 @@ done
 
 VLLM_ARGS=("$VLLM_BIN" serve "$MODEL" --host "$LOCALVLLM_LISTEN_HOST" --port "$PORT")
 VLLM_ARGS+=(--served-model-name "$SERVED_MODEL_NAME")
-VLLM_ARGS+=(--tensor-parallel-size "$TENSOR_PARALLEL_SIZE")
-VLLM_ARGS+=(--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
-[ -z "$MAX_MODEL_LEN" ] || VLLM_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
-[ -z "$DTYPE" ] || VLLM_ARGS+=(--dtype "$DTYPE")
-[ -z "$QUANTIZATION" ] || VLLM_ARGS+=(--quantization "$QUANTIZATION")
-[ -z "$MAX_NUM_SEQS" ] || VLLM_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS")
-[ -z "$MAX_NUM_BATCHED_TOKENS" ] || VLLM_ARGS+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
-[ -z "$KV_CACHE_DTYPE" ] || VLLM_ARGS+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
-# Legacy CPU swap was removed from current vLLM. Keep reading old settings
-# so existing configuration files migrate without producing an invalid CLI.
-if [ -n "$SWAP_SPACE" ]; then
-  echo "Warning: SWAP_SPACE is obsolete and ignored; current vLLM no longer accepts --swap-space." >&2
+if [ "$ENGINE_DEFAULTS" = "0" ]; then
+  VLLM_ARGS+=(--tensor-parallel-size "$TENSOR_PARALLEL_SIZE")
+  VLLM_ARGS+=(--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
+  [ -z "$MAX_MODEL_LEN" ] || VLLM_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
+  [ -z "$DTYPE" ] || VLLM_ARGS+=(--dtype "$DTYPE")
+  [ -z "$QUANTIZATION" ] || VLLM_ARGS+=(--quantization "$QUANTIZATION")
+  [ -z "$MAX_NUM_SEQS" ] || VLLM_ARGS+=(--max-num-seqs "$MAX_NUM_SEQS")
+  [ -z "$MAX_NUM_BATCHED_TOKENS" ] || VLLM_ARGS+=(--max-num-batched-tokens "$MAX_NUM_BATCHED_TOKENS")
+  [ -z "$KV_CACHE_DTYPE" ] || VLLM_ARGS+=(--kv-cache-dtype "$KV_CACHE_DTYPE")
+  # Legacy CPU swap was removed from current vLLM. Keep reading old settings
+  # so existing configuration files migrate without producing an invalid CLI.
+  if [ -n "$SWAP_SPACE" ]; then
+    echo "Warning: SWAP_SPACE is obsolete and ignored; current vLLM no longer accepts --swap-space." >&2
+  fi
+  [ "${CPU_OFFLOAD_GB:-0}" = "0" ] || VLLM_ARGS+=(--cpu-offload-gb "$CPU_OFFLOAD_GB")
+  [ "$ENFORCE_EAGER" = "0" ] || VLLM_ARGS+=(--enforce-eager)
 fi
-[ "${CPU_OFFLOAD_GB:-0}" = "0" ] || VLLM_ARGS+=(--cpu-offload-gb "$CPU_OFFLOAD_GB")
-[ "$ENFORCE_EAGER" = "0" ] || VLLM_ARGS+=(--enforce-eager)
 [ "$TRUST_REMOTE_CODE" = "0" ] || VLLM_ARGS+=(--trust-remote-code)
 [ "$DISABLE_LOG_REQUESTS" = "0" ] || VLLM_ARGS+=(--disable-log-requests)
 [ "$ENABLE_SLEEP" = "0" ] || VLLM_ARGS+=(--enable-sleep-mode)
-[ -z "$TASK" ] || VLLM_ARGS+=(--task "$TASK")
+if [ "$ENGINE_DEFAULTS" = "0" ] && [ -n "$TASK" ]; then
+  # Current vLLM selects pooling/generation with --runner; --task was removed.
+  case "$TASK" in
+    embedding|embed|classify|score|reward) VLLM_ARGS+=(--runner pooling) ;;
+    generate) VLLM_ARGS+=(--runner generate) ;;
+    auto|transcription) ;; # Let the model select its native runner.
+  esac
+fi
 [ -z "$REVISION" ] || VLLM_ARGS+=(--revision "$REVISION")
 [ -z "$CODE_REVISION" ] || VLLM_ARGS+=(--code-revision "$CODE_REVISION")
 [ -z "$TOKENIZER_REVISION" ] || VLLM_ARGS+=(--tokenizer-revision "$TOKENIZER_REVISION")
@@ -442,6 +454,7 @@ trap 'rm -f -- "$TMP_SH" "$TMP_ENV"' EXIT
   printf 'LOCALVLLM_BACKEND=%q\n' "$LOCALVLLM_BACKEND"
   printf 'LOCALVLLM_ACTIVE_ID=%q\n' "$ACTIVE_ID"
   printf 'LOCALVLLM_MODEL=%q\n' "$MODEL"
+  printf 'LOCALVLLM_REVISION=%q\n' "${REVISION:-main}"
   printf 'LOCALVLLM_FORMAT=%q\n' "$FORMAT"
   printf 'LOCALVLLM_MODEL_TYPE=%q\n' "$MODEL_TYPE"
   printf 'LOCALVLLM_SERVED_MODEL_NAME=%q\n' "$SERVED_MODEL_NAME"

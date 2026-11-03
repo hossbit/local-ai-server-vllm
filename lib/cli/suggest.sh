@@ -8,11 +8,12 @@ localvllm_override_value() {
 
   (
     set +u
-    unset SERVED_MODEL_NAME MODEL_TYPE
+    unset SERVED_MODEL_NAME MODEL_TYPE CUDA_VISIBLE_DEVICES
     # shellcheck disable=SC1090
     . "$file" >/dev/null 2>&1 || exit 0
     case "$key" in
       SERVED_MODEL_NAME) printf '%s\n' "${SERVED_MODEL_NAME:-}" ;;
+      CUDA_VISIBLE_DEVICES) [ "${CUDA_VISIBLE_DEVICES+x}" ] && printf '%s\n' "$CUDA_VISIBLE_DEVICES" ;;
       MODEL_TYPE) printf '%s\n' "${MODEL_TYPE:-}" ;;
     esac
   )
@@ -25,8 +26,18 @@ suggest_for_model() {
   local path="$4"
   local override="" model_bytes ram_bytes vram_bytes vram_free_bytes gpus
   local model_gib vram_gib usable_vram_gib tp gpu_util max_len max_seqs cpu_offload
+  local gpu_mask_set="${CUDA_VISIBLE_DEVICES+x}"
+  local CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES-${LOCALVLLM_CUDA_VISIBLE_DEVICES:-}}"
+  local selected_devices
+  # Leave an unspecified mask unset so NVIDIA can enumerate all devices.
+  if [ -z "$CUDA_VISIBLE_DEVICES" ] && [ -z "$gpu_mask_set" ]; then
+    unset CUDA_VISIBLE_DEVICES
+  fi
 
   override="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id" 2>/dev/null || true)"
+  if selected_devices="$(localvllm_override_value "$override" CUDA_VISIBLE_DEVICES)"; then
+    CUDA_VISIBLE_DEVICES="$selected_devices"
+  fi
   model_bytes="$(localvllm_model_size_bytes "$path")"
   ram_bytes="$(system_ram_bytes)"
   vram_bytes="$(gpu_vram_total_min_bytes)"
@@ -52,7 +63,7 @@ suggest_for_model() {
     echo "    MAX_NUM_SEQS=256"
     echo
     echo "  Download it first for hardware-specific advice:"
-    echo "    huggingface-cli download '$model'"
+    echo "    hf download '$model'"
     echo "  then point MODEL at the downloaded directory and run suggest again."
     return 0
   fi
@@ -81,12 +92,12 @@ suggest_for_model() {
   IFS=$'\t' read -r tp gpu_util max_len max_seqs cpu_offload < <(
     awk -v m="$model_gib" -v v="$usable_vram_gib" -v g="$gpus" 'BEGIN {
       if (g < 1) g = 1
-      total = v * g
-      headroom = total - m
-
-      tp = int((m * 1.10 + v - 1) / v)
+      tp = int(m * 1.10 / v)
+      if (tp * v < m * 1.10) tp++
       if (tp < 1) tp = 1
       if (tp > g) tp = g
+      total = v * tp
+      headroom = total - m
 
       if (headroom > 24) {
         ctx = 32768

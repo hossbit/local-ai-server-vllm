@@ -142,6 +142,12 @@ localvllm backend install omni  # Add vLLM-Omni later
 ```
 
 The default backend is `vllm`. Use `localvllm --backend omni` to target Omni.
+
+Put your own complete model folder in `~/ai-vllm/models/vllm/` (or `models/omni/`).
+Run `localvllm models --paths` to see storage locations, then select a folder
+with `localvllm use FOLDER_NAME`. Existing folders elsewhere also work with
+`localvllm use /path/to/model`. [Model storage guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models).
+
 For GGUF models, consider [Local AI Server](https://github.com/hossbit/local-ai-server),
 which uses llama.cpp. [GGUF details](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#gguf-models).
 

@@ -57,6 +57,7 @@ source_localvllm_lib() {
 # derived from the canonical backend name, never shared accidentally.
 
 declare -ga LOCALVLLM_RUNTIME_KEYS=(
+  ENGINE_DEFAULTS
   TENSOR_PARALLEL_SIZE
   GPU_MEMORY_UTILIZATION
   MAX_MODEL_LEN
@@ -355,7 +356,21 @@ system_ram_bytes() {
     return 0
   fi
 
-  awk '/MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo 2>/dev/null || printf '0\n'
+  awk '/MemTotal:/ { printf "%.0f\n", $2 * 1024; exit }' /proc/meminfo 2>/dev/null || printf '0\n'
+}
+
+# nvidia-smi does not honor CUDA_VISIBLE_DEVICES itself. Apply the selected
+# backend/model mask explicitly, and do not guess physical memory for MIG IDs.
+localvllm_nvidia_query() {
+  local field="$1" mask="${CUDA_VISIBLE_DEVICES-${LOCALVLLM_CUDA_VISIBLE_DEVICES:-}}"
+  local -a args=("--query-gpu=$field" "--format=csv,noheader,nounits")
+  if [[ "${CUDA_VISIBLE_DEVICES+x}" || -n "$mask" ]]; then
+    case "$mask" in
+      ''|-1|*MIG-*) return 1 ;;
+    esac
+    args+=("--id=$mask")
+  fi
+  nvidia-smi "${args[@]}" 2>/dev/null
 }
 
 gpu_vram_bytes() {
@@ -367,15 +382,20 @@ gpu_vram_bytes() {
   fi
 
   if command -v nvidia-smi >/dev/null 2>&1; then
-    mib="$(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null | awk 'NR == 1 {print int($1); exit}')"
+    mib="$(localvllm_nvidia_query memory.total | awk 'NR == 1 {print int($1); exit}')" || mib=""
     if [ -n "$mib" ] && [ "$mib" -gt 0 ] 2>/dev/null; then
       printf '%s\n' "$((mib * 1024 * 1024))"
       return 0
     fi
   fi
 
+  if [[ "${CUDA_VISIBLE_DEVICES+x}" || -n "${LOCALVLLM_CUDA_VISIBLE_DEVICES:-}" ]]; then
+    printf '0\n'
+    return 0
+  fi
+
   if command -v rocm-smi >/dev/null 2>&1; then
-    bytes="$(rocm-smi --showmeminfo vram 2>/dev/null | awk '/Total Memory.*\(B\)/ {print int($NF); exit}')"
+    bytes="$(rocm-smi --showmeminfo vram 2>/dev/null | awk '/Total Memory.*\(B\)/ {printf "%.0f\n", $NF; exit}')"
     if [ -n "$bytes" ] && [ "$bytes" -gt 0 ] 2>/dev/null; then
       printf '%s\n' "$bytes"
       return 0
@@ -406,7 +426,7 @@ gpu_vram_free_bytes() {
   fi
 
   if command -v nvidia-smi >/dev/null 2>&1; then
-    mib="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null | awk 'NR == 1 {print int($1); exit}')"
+    mib="$(localvllm_nvidia_query memory.free | awk 'NR == 1 {print int($1); exit}')" || mib=""
     if [ -n "$mib" ] && [ "$mib" -gt 0 ] 2>/dev/null; then
       printf '%s\n' "$((mib * 1024 * 1024))"
       return 0
@@ -428,18 +448,22 @@ gpu_vram_total_min_bytes() {
   if command -v nvidia-smi >/dev/null 2>&1; then
     while IFS= read -r value; do
       value="$(printf '%s' "$value" | tr -d ' ')"
-      [ -n "$value" ] || continue
+      [[ "$value" =~ ^[0-9]+$ ]] || continue
       if [ -z "$min" ] || [ "$value" -lt "$min" ]; then
         min="$value"
       fi
-    done < <(nvidia-smi --query-gpu=memory.total --format=csv,noheader,nounits 2>/dev/null)
-    if [ -n "$min" ] && [ "$min" -gt 0 ] 2>/dev/null; then
+    done < <(localvllm_nvidia_query memory.total)
+    if [ -n "$min" ]; then
       printf '%s\n' "$((min * 1024 * 1024))"
       return 0
     fi
   fi
 
-  gpu_vram_bytes
+  if [[ "${CUDA_VISIBLE_DEVICES+x}" || -n "${LOCALVLLM_CUDA_VISIBLE_DEVICES:-}" ]]; then
+    printf '0\n'
+  else
+    gpu_vram_bytes
+  fi
 }
 
 gpu_vram_free_min_bytes() {
@@ -453,12 +477,12 @@ gpu_vram_free_min_bytes() {
   if command -v nvidia-smi >/dev/null 2>&1; then
     while IFS= read -r value; do
       value="$(printf '%s' "$value" | tr -d ' ')"
-      [ -n "$value" ] || continue
+      [[ "$value" =~ ^[0-9]+$ ]] || continue
       if [ -z "$min" ] || [ "$value" -lt "$min" ]; then
         min="$value"
       fi
-    done < <(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits 2>/dev/null)
-    if [ -n "$min" ] && [ "$min" -gt 0 ] 2>/dev/null; then
+    done < <(localvllm_nvidia_query memory.free)
+    if [ -n "$min" ]; then
       printf '%s\n' "$((min * 1024 * 1024))"
       return 0
     fi
@@ -478,15 +502,20 @@ gpu_count() {
   fi
 
   if command -v nvidia-smi >/dev/null 2>&1; then
-    count="$(nvidia-smi --query-gpu=index --format=csv,noheader 2>/dev/null | grep -c .)"
+    count="$(localvllm_nvidia_query index | grep -c .)" || count=0
     if [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null; then
       printf '%s\n' "$count"
       return 0
     fi
   fi
 
+  if [[ "${CUDA_VISIBLE_DEVICES+x}" || -n "${LOCALVLLM_CUDA_VISIBLE_DEVICES:-}" ]]; then
+    printf '0\n'
+    return 0
+  fi
+
   if command -v rocm-smi >/dev/null 2>&1; then
-    count="$(rocm-smi --showid 2>/dev/null | grep -c '^GPU\[')"
+    count="$(rocm-smi --showid 2>/dev/null | grep -c '^GPU\[')" || count=0
     if [ -n "$count" ] && [ "$count" -gt 0 ] 2>/dev/null; then
       printf '%s\n' "$count"
       return 0
@@ -745,6 +774,41 @@ localvllm_detect_format() {
   printf 'remote\n'
 }
 
+# Locate only the requested cached revision; never download or guess a snapshot.
+localvllm_cached_model_path() {
+  local model="$1" revision="${2:-main}" root snapshot
+  [[ "$model" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] || return 1
+  root="${LOCALVLLM_HF_HOME:-$AI_DIR/${LOCALVLLM_HF_CACHE_SUBDIR:-hf-cache}}/hub/models--${model//\//--}"
+  snapshot="$revision"
+  if [ -f "$root/refs/$revision" ]; then
+    snapshot="$(cat "$root/refs/$revision")"
+  fi
+  [[ "$snapshot" =~ ^[a-fA-F0-9]+$ ]] || return 1
+  [ -f "$root/snapshots/$snapshot/config.json" ] || return 1
+  printf '%s\n' "$root/snapshots/$snapshot"
+}
+
+# A readable library link keeps one shared HF cache copy of the weights.
+localvllm_link_cached_model() {
+  local model="$1" revision="${2:-main}" snapshot link
+  snapshot="$(localvllm_cached_model_path "$model" "$revision")" || return 0
+  link="$MODELS_DIR/$(localvllm_safe_id "$model")"
+  if [ -L "$link" ]; then
+    # Refresh only links that already point into this model's cache snapshots.
+    case "$(readlink "$link")" in
+      "$(dirname "$(dirname "$snapshot")")"/snapshots/*)
+        ln -sfn -- "$snapshot" "$link" 2>/dev/null || return 0
+        return 0
+        ;;
+    esac
+    return 0
+  fi
+  [ ! -e "$link" ] || return 0
+  mkdir -p "$MODELS_DIR" || return 0
+  ln -s -- "$snapshot" "$link" 2>/dev/null || return 0
+  echo "Model files: $link (linked to the shared download cache)"
+}
+
 localvllm_model_size_bytes() {
   local spec="$1"
 
@@ -824,11 +888,21 @@ localvllm_model_entries() {
   fi
 
   if [ -d "$models_dir" ]; then
-    local path base id gguf config snapshot model_root parent
+    local path base id gguf config snapshot model_root parent resolved
     while IFS= read -r path; do
       base="$(basename "$path")"
       if [ -f "$path/config.json" ]; then
         id="$base"
+        if [ -L "$path" ]; then
+          resolved="$(readlink -f "$path")"
+          case "$resolved" in
+            */models--*/snapshots/*)
+              parent="$(basename "$(dirname "$(dirname "$resolved")")")"
+              id="${parent#models--}"
+              id="${id//--//}"
+              ;;
+          esac
+        fi
         id_source["$id"]=local
         id_model["$id"]="$path"
         id_format["$id"]=hf
@@ -922,6 +996,9 @@ localvllm_model_entries() {
       id_model["$id"]="$model"
       id_format["$id"]="$format"
       id_path["$id"]="$model"
+      if [ "$format" = remote ] && [ -d "$models_dir/$(localvllm_safe_id "$id")" ]; then
+        id_path["$id"]="$models_dir/$(localvllm_safe_id "$id")"
+      fi
     done < <(find "$overrides_dir" -mindepth 1 -maxdepth 1 -type f -name '*.conf' -print | sort)
   fi
 

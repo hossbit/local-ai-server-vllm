@@ -1,7 +1,7 @@
 # shellcheck shell=bash disable=SC2034,SC2153,SC2154
 
 models_cmd() {
-  local active_id="" served="" use_color_flag=0 selector json=0
+  local active_id="" served="" use_color_flag=0 selector json=0 paths=0
   local -a col_model=() col_source=() col_format=() col_type=() col_size=() col_active=()
   local -a positional=()
   local w_model=5 w_source=6 w_format=6 w_type=4 w_size=4 w_active=6
@@ -11,11 +11,12 @@ models_cmd() {
   for arg in "$@"; do
     case "$arg" in
       --json) json=1 ;;
-      -*) fail "usage: localvllm models [--json] [BACKEND]" ;;
+      --paths) paths=1 ;;
+      -*) fail "usage: localvllm models [--json|--paths] [BACKEND]" ;;
       *) positional+=("$arg") ;;
     esac
   done
-  [ "${#positional[@]}" -le 1 ] || fail "usage: localvllm models [--json] [BACKEND]"
+  [ "${#positional[@]}" -le 1 ] || fail "usage: localvllm models [--json|--paths] [BACKEND]"
   if [ "${#positional[@]}" -eq 1 ]; then
     selector="$(localvllm_resolve_selector "${positional[0]}")" || return 1
     [ "$selector" != "all" ] || fail "choose one backend: localvllm models vllm | localvllm models omni"
@@ -42,6 +43,7 @@ models_cmd() {
       --arg backend "$LOCALVLLM_BACKEND" \
       --arg label "$LOCALVLLM_BACKEND_LABEL" \
       --arg dir "$MODELS_DIR" \
+      --arg cache "${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}" \
       --arg active "$active_id" \
       --arg service "$service_state" \
       --arg served "$served" '
@@ -50,14 +52,19 @@ models_cmd() {
             id: .[0], source: .[1], model: .[2], format: .[3], path: .[4],
             active: (.[0] == $active)
           })
-        | {backend: $backend, label: $label, models_dir: $dir,
+        | {backend: $backend, label: $label, models_dir: $dir, cache_dir: $cache,
            active_model: $active, service: $service,
            served_model: $served, models: .}
       '
     return 0
   fi
 
-  echo "Backend: $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)  models: $MODELS_DIR"
+  echo "Backend: $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
+  echo "Your model folders: $MODELS_DIR"
+  echo "Shared download cache: ${LOCALVLLM_HF_HOME:-$AI_DIR/$LOCALVLLM_HF_CACHE_SUBDIR}"
+  echo "Add your own: copy or link a complete model folder here, then run localvllm --backend $LOCALVLLM_BACKEND use FOLDER_NAME"
+  echo "Or use an existing folder: localvllm --backend $LOCALVLLM_BACKEND use /path/to/model"
+  echo
 
   if [ ! -d "$MODELS_DIR" ]; then
     echo "Models directory does not exist: $MODELS_DIR"
@@ -77,7 +84,7 @@ models_cmd() {
 
     model_type="$(localvllm_model_type "$id" "$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id" 2>/dev/null || true)")"
     size_display="-"
-    if [ "$format" != "remote" ]; then
+    if [ -e "$path" ]; then
       size_display="$(format_bytes_gib "$(localvllm_model_size_bytes "$path")")"
     fi
 
@@ -93,6 +100,16 @@ models_cmd() {
     col_size+=("$size_display")
     col_active+=("$active_display")
     col_type+=("$model_type")
+    if [ "$paths" = 1 ]; then
+      echo "$id"
+      echo "  model: $model"
+      if [ -e "$path" ]; then
+        echo "  files: $path"
+        [ ! -L "$path" ] || echo "  cache target: $(readlink -f "$path")"
+      else
+        echo "  files: downloads to the shared cache on first start"
+      fi
+    fi
 
     [ "${#id}" -le "$w_model" ] || w_model="${#id}"
     [ "${#source}" -le "$w_source" ] || w_source="${#source}"

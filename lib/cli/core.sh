@@ -22,7 +22,7 @@ Commands:
   logs [BACKEND]         Follow one service's current log (rotated on start)
   metrics [--watch] [BACKEND]
                          Show vLLM Prometheus metrics (queue, KV cache, speed)
-  models [--json]        List that backend's models and the active one
+  models [--json|--paths] List models, storage folders, and the active one
   use MODEL              Select the model for that backend
   load [MODEL]           Start/wake the service, optionally switching MODEL
   unload                 Sleep the model when sleep mode is enabled, else stop

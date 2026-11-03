@@ -204,3 +204,6 @@ SERVED_NAME="$(config_assignment_value LOCALVLLM_SERVED_MODEL_NAME "$SERVE_ENV" 
 echo "Local $LOCALVLLM_BACKEND_LABEL started at http://${LOCALVLLM_LISTEN_HOST}:${PORT} (PID $PID)"
 echo "Model: ${ACTIVE_ID:-unknown}${SERVED_NAME:+ (served as $SERVED_NAME)}"
 echo "Use 'localvllm --backend $LOCALVLLM_BACKEND models' to see model IDs."
+localvllm_link_cached_model \
+  "$(config_assignment_value LOCALVLLM_MODEL "$SERVE_ENV")" \
+  "$(config_assignment_value LOCALVLLM_REVISION "$SERVE_ENV")"
