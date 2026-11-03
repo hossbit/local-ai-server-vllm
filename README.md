@@ -52,7 +52,7 @@ choose a model that fits your GPU. Use `localvllm status` to check the server
 and `localvllm ui` to find its API documentation. The project currently provides
 a command-line interface and API documentation, not a graphical chat app.
 
-For AMD, CPU, or advanced setups, see the [installation guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#install).
+For AMD, CPU, or advanced setups, see the [installation guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation).
 
 ## Why Local AI Server for vLLM?
 
