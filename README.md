@@ -55,7 +55,7 @@ For AMD, CPU, or other advanced setups, see Requirements and Install below.
 Compare this managed vLLM server with running vLLM directly, SGLang's
 server-focused inference framework, and Ollama's local model runner.
 
-| Feature | **This project** | Raw vLLM | SGLang | Ollama |
+| Feature | **locallvllm** | Raw vLLM | SGLang | Ollama |
 | --- | --- | --- | --- | --- |
 | Best for | Easier vLLM server management | Direct vLLM control | Scalable model serving | Simple local model running |
 | Setup | Guided CLI; installs the engine | Manual installation and configuration | Manual installation and configuration | Install and run a model |
