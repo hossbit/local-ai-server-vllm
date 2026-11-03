@@ -268,17 +268,21 @@ or export `HF_TOKEN` when starting the service.
 `localvllm use /absolute/path/to/model` works too. The path is written to the
 backend's `models.d` entry, so it survives reloads.
 
-### GGUF
+### GGUF models
 
-vLLM has experimental GGUF support. Put a `.gguf` file in the backend's model
-root and select it. If vLLM cannot infer the tokenizer, add:
+For a straightforward GGUF setup, use [Local AI Server](https://github.com/hossbit/local-ai-server),
+which runs GGUF models with llama.cpp.
 
-```bash
-TOKENIZER=/path/to/tokenizer
-```
+vLLM also supports GGUF experimentally, but its support is under-optimized and
+may not work with every model or feature. Current releases require the separate
+`vllm-gguf-plugin`, which this project's installer does not install. A compatible
+base-model tokenizer may also be needed. See the official [vLLM GGUF guide](https://docs.vllm.ai/en/latest/features/quantization/gguf/)
+for version-specific requirements.
 
-in the model override. For serious GGUF use, llama.cpp remains the better
-engine; this project intentionally does not pretend otherwise.
+vLLM-Omni supports GGUF for certain diffusion transformer weights, with a base
+Hugging Face checkpoint and the GGUF plugin. This is model- and hardware-specific;
+see the [vLLM-Omni GGUF guide](https://docs.vllm.ai/projects/vllm-omni/en/stable/user_guide/quantization/gguf/).
+Discovering a `.gguf` file here does not guarantee that it can be served.
 
 ## Commands
 
@@ -699,8 +703,8 @@ and pin both versions when needed. The pip log is at
 
 ### `use` succeeds but the launcher will not generate
 
-The model must be a Hugging Face directory with `config.json` or a `.gguf`
-file. Run `localvllm models` to see what was discovered. For remote models,
+The model must be a Hugging Face directory with `config.json` or a supported
+model file. GGUF has additional requirements; see [GGUF models](#gguf-models). Run `localvllm models` to see what was discovered. For remote models,
 the first start downloads weights and can take a long time.
 
 ### Inspect logs
