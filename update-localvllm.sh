@@ -73,8 +73,8 @@ Usage: $0 [--no-start] [--backend NAME|all] [--scripts-only] [--vllm-only]
 Updates the manager, selected engine packages, and installed managed llama-swap.
 
 Options:
-  --backend NAME   Update vllm, omni, or all (default: all installed)
-  --all            Same as --backend all
+  --backend NAME   Update vllm, omni, or all (default: selected backend)
+  --all            Update every installed backend
   --no-start       Leave previously running services stopped
   --scripts-only   Refresh helper scripts/config; keep engine/router versions
   --vllm-only      Upgrade engine packages only; keep manager/router versions
@@ -123,7 +123,7 @@ if [ "$SCRIPTS_ONLY" -eq 1 ] && [ "$VLLM_ONLY" -eq 1 ]; then
 fi
 
 if [ "${#UPDATE_BACKENDS[@]}" -eq 0 ]; then
-  add_backend all
+  add_backend "${LOCALVLLM_BACKEND:-$LOCALVLLM_DEFAULT_BACKEND}"
 fi
 
 declare -A SEEN=()

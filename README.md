@@ -146,7 +146,8 @@ localvllm add /path/to/model    # Register a complete existing folder
 localvllm mode                 # Show direct or automatic serving mode
 localvllm status                # Check the selected backend
 localvllm version               # Manager, engines, Python and optional router
-localvllm update                # Update installed components safely
+localvllm update                # Active backend, llama-swap and helpers
+localvllm update --all          # Every installed backend
 localvllm models                # List models
 localvllm start                 # Start the server
 localvllm stop                  # Stop the server

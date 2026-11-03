@@ -138,13 +138,16 @@ reload_cmd() {
 }
 
 update_cmd() {
-  local updater="$BIN_DIR/update-localvllm.sh"
+  local updater="$BIN_DIR/update-localvllm.sh" arg all=0
   local -a args=("$@")
 
   [ -x "$updater" ] || updater="$SCRIPT_DIR/update-localvllm.sh"
   [ -x "$updater" ] || fail "missing updater: $BIN_DIR/update-localvllm.sh"
 
-  if [ "${LOCALVLLM_BACKEND_REQUESTED:-0}" = "1" ]; then
+  for arg in "${args[@]}"; do
+    case "$arg" in --all) all=1 ;; esac
+  done
+  if [ "$all" = 0 ]; then
     args=(--backend "$LOCALVLLM_BACKEND" "${args[@]}")
   fi
 

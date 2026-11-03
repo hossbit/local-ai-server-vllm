@@ -141,7 +141,7 @@ menu_loop() {
       s|S) menu_run stop || echo 'Stop failed; see the error above.' ;;
       u|U)
         echo 'Checking the manager, installed engines and optional router. Affected services may restart.'
-        "$SCRIPT_PATH" update || echo 'Update failed; see the error above.' ;;
+        "$SCRIPT_PATH" update --all || echo 'Update failed; see the error above.' ;;
       b|B)
         echo '1) vLLM — text, vision input, embeddings and reranking'
         echo '2) Omni — supported audio, image, video and multimodal generation'

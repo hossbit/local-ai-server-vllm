@@ -36,7 +36,7 @@ Commands:
   backend ...            List/install backends, or set the default
   doctor [--json] [BACKEND|all]
                          Check Python, vLLM, GPU, models, ports, keys, pip
-  update                 Update vLLM packages and helper scripts
+  update [--all]         Update selected backend, router and helpers; --all updates every backend
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
   help                   Show this help
