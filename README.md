@@ -63,13 +63,17 @@ Compare this managed vLLM server with running vLLM directly, SGLang's
 server-focused inference framework, and Ollama's local model runner.
 
 | Feature | **locallvllm** | Raw vLLM | SGLang | Ollama |
-| --- | --- | --- | --- | --- |
-| Best for | Easier vLLM server management | Direct vLLM control | Scalable model serving | Simple local model running |
-| Setup | Guided CLI; installs the engine | Manual installation and configuration | Manual installation and configuration | Install and run a model |
-| Text and multimodal | vLLM + optional vLLM-Omni | Supported vLLM models; Omni separate | Supported models; Omni separate | Depends on model |
-| OpenAI-compatible API | Yes | Yes | Yes | Yes; subset |
-| Linux service management | Built-in service setup and CLI | Configure separately | Configure separately | Linux service |
-| Monitoring and recovery | Status, logs, benchmark, metrics and update rollback | Metrics and benchmark tools | Server monitoring tools | CLI and API information |
+| --- | :---: | :---: | :---: | :---: |
+| Easy setup | ✅ Guided CLI | ⚠️ Manual | ⚠️ Manual | ✅ Simple CLI |
+| Text and multimodal | ✅ vLLM + Omni | ✅ Supported models | ✅ Supported models | ✅ Supported models |
+| OpenAI-compatible API | ✅ | ✅ | ✅ | ✅ Subset |
+| Linux service | ✅ Managed | ⚠️ Configure | ⚠️ Configure | ✅ Service |
+| Separate vLLM + Omni | ✅ Managed | ⚠️ Separate setup | — Different engine | — Different engine |
+| Monitoring | ✅ CLI + metrics | ✅ Metrics + tools | ✅ Server tools | ✅ CLI + API |
+| Staged update rollback | ✅ Built in | ⚠️ Self-managed | ⚠️ Self-managed | — |
+
+✅ Available or included · ⚠️ Requires extra setup or management · — Not a
+matching feature in this comparison.
 
 API endpoints, model support, hardware requirements, and performance vary by
 version and configuration. Model downloads need network access; local inference
