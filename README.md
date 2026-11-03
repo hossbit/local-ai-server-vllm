@@ -37,11 +37,11 @@ suggestions, benchmarks, systemd — and runs inference through vLLM's native se
 
 <div align="center">
   <a href="https://github.com/hossbit/local-ai-server-vllm/releases/latest"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-release.svg" alt="Latest release" height="68"></a>
-  <a href="https://github.com/hossbit/local-ai-server-vllm/pulse"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-download.svg" alt="Recorded repository clones" height="68"></a>
+  <a href="https://github.com/hossbit/local-ai-server-vllm/pulse"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-download.svg" alt="Downloads (recorded repository clones)" height="68"></a>
   <a href="https://github.com/hossbit/local-ai-server-vllm/stargazers"><img src="https://raw.githubusercontent.com/hossbit/mirassets/main/images/localvllm-badge-stars.svg" alt="GitHub stars" height="68"></a>
 </div>
 
-The clone badge counts recorded repository clones, not unique users or release
+The download badge counts recorded repository clones, not unique users or release
 asset downloads. Its total starts when badge tracking began.
 
 ## ❤️ Support
