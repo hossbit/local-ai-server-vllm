@@ -337,7 +337,10 @@ reconnect_shell_on_path() {
 
 vllm_detect_target_device() {
   if [ -n "${VLLM_TARGET_DEVICE:-}" ]; then
-    printf '%s\n' "$VLLM_TARGET_DEVICE"
+    case "$VLLM_TARGET_DEVICE" in
+      cuda|rocm|cpu) printf '%s\n' "$VLLM_TARGET_DEVICE" ;;
+      *) echo 'Error: VLLM_TARGET_DEVICE must be cuda, rocm, or cpu.' >&2; return 1 ;;
+    esac
     return 0
   fi
 
@@ -377,7 +380,11 @@ vllm_device_hint() {
 localvllm_omni_python_ok() {
   local version
   version="$(python_version "$1")" || return 1
-  [[ "$version" =~ ^3\.(11|12|13)(\.|$) ]]
+  if [ "${VLLM_TARGET_DEVICE:-}" = rocm ]; then
+    [[ "$version" =~ ^3\.12(\.|$) ]]
+  else
+    [[ "$version" =~ ^3\.(11|12|13)(\.|$) ]]
+  fi
 }
 
 localvllm_python_can_create_venv() {
@@ -390,13 +397,14 @@ localvllm_find_compatible_python() {
   # newer Python than Omni; let pip validate a specific plain vLLM version.
   if [ "${LOCALVLLM_PYTHON:-python3}" != python3 ]; then
     if localvllm_python_can_create_venv "$LOCALVLLM_PYTHON" &&
+      { [ "${VLLM_TARGET_DEVICE:-}" != rocm ] || localvllm_omni_python_ok "$LOCALVLLM_PYTHON"; } &&
       { { [ "$backend" = vllm ] && python_meets_minimum "$LOCALVLLM_PYTHON" "${LOCALVLLM_MIN_PYTHON:-3.10}"; } ||
         { [ "$backend" = omni ] && localvllm_omni_python_ok "$LOCALVLLM_PYTHON"; }; }; then
       command -v "$LOCALVLLM_PYTHON" || printf '%s\n' "$LOCALVLLM_PYTHON"
       return 0
     fi
     echo "Error: configured Python ($LOCALVLLM_PYTHON) is unusable or incompatible with $backend." >&2
-    echo "Use Python 3.11–3.13 with venv and ensurepip for Omni, or install Python 3.12 and retry." >&2
+    echo "Use Python 3.11–3.13 with venv and ensurepip for Omni; ROCm wheels require Python 3.12." >&2
     return 1
   fi
   for candidate in python3.12 python3.13 python3.11 python3; do
@@ -648,6 +656,13 @@ vllm_verify_install() {
     return 1
   }
 
+  if [ "${VLLM_TARGET_DEVICE:-}" = rocm ]; then
+    if ! "$venv/bin/python" -c 'import torch; assert torch.version.hip, "installed PyTorch is not a ROCm build"' >/dev/null 2>&1; then
+      echo 'Error: ROCm was requested, but the installed PyTorch is not a working ROCm build.' >&2
+      echo 'Select Python 3.12 and an exact ROCm vLLM version with its matching wheel index; a CUDA/CPU wheel may have been selected.' >&2
+      return 1
+    fi
+  fi
   printf '%s\n' "$version"
 }
 

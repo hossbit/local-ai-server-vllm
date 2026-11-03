@@ -139,6 +139,7 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 - An NVIDIA GPU with a working driver and enough VRAM for your chosen model is
   recommended. ROCm needs compatible wheels; CPU support is experimental.
   Fedora/RHEL and ARM64 availability depends on upstream packages and drivers.
+  ROCm installs select Python 3.12 and verify that PyTorch is a ROCm build.
 - The installer may need `sudo` for system packages. It does not install GPU
   drivers. See the [full requirements](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#requirements).
 
