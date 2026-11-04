@@ -467,6 +467,10 @@ Usage: localvllm ui [--open] [--docs|--dashboard|--api|--models]
   --open       Open the destination in this Linux desktop's browser
   -h, --help   Show this help
 
+The selected backend must already be running. This command never starts a
+service, loads a model, or changes direct/swap mode. If stopped, it prints
+the command to start that backend. Direct mode provides API docs, not chat.
+
 vLLM does not ship a chat UI. Connect Open WebUI, LibreChat, or another
 OpenAI-compatible client to the printed /v1 base URL.
 
@@ -477,7 +481,7 @@ HELP
 }
 
 ui_cmd() {
-  local target="docs" open_browser=0 base url registry
+  local target="docs" open_browser=0 base url registry browser_log
 
   if [ "$#" -eq 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then
     ui_usage
@@ -535,11 +539,40 @@ ui_cmd() {
     echo "API-key auth is enabled. Use your saved key as a Bearer token."
   fi
 
+  if ! service_is_active; then
+    echo
+    echo "Service is not running. Start it yourself when ready:"
+    echo "  localvllm --backend $LOCALVLLM_BACKEND start"
+    echo "For direct/manual mode, select a model first with: localvllm --backend $LOCALVLLM_BACKEND use MODEL"
+    echo 'This command does not start services, load models, or change serving mode.'
+    [ "$open_browser" = 0 ] || return 1
+    return 0
+  fi
   if [ "$open_browser" -eq 1 ]; then
-    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-      fail "no graphical desktop detected; open the URL above in your browser"
+    require_api_tools
+    api_auth_curl_args
+    if ! curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/health" >/dev/null 2>&1; then
+      echo 'Error: service is marked running, but its API is unavailable or still loading.' >&2
+      echo "Check: localvllm --backend $LOCALVLLM_BACKEND status" >&2
+      echo "Logs: localvllm --backend $LOCALVLLM_BACKEND logs --no-follow" >&2
+      return 1
     fi
-    command -v xdg-open >/dev/null 2>&1 || fail "xdg-open is unavailable; open the URL above in your browser"
-    xdg-open "$url" >/dev/null 2>&1 || fail "could not open the browser; use the URL above"
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+      fail "no graphical desktop detected; open the URL above in a browser on this server, or use SSH port forwarding from your computer"
+    fi
+    browser_log="$AI_DIR/${LOCALVLLM_LOGS_SUBDIR:-logs}/browser.log"
+    mkdir -p "$(dirname "$browser_log")"
+    localvllm_rotate_log "$browser_log" || return 1
+    (umask 077; : > "$browser_log") || return 1
+    chmod 600 "$browser_log"
+    if command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" 9>&- >> "$browser_log" 2>&1; then
+      echo "Browser request sent: $url"
+    elif command -v gio >/dev/null 2>&1 && gio open "$url" 9>&- >> "$browser_log" 2>&1; then
+      echo "Browser request sent: $url"
+    else
+      echo "Error: could not open the browser. Open $url manually." >&2
+      echo "Browser launcher details: $browser_log" >&2
+      return 1
+    fi
   fi
 }

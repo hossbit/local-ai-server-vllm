@@ -93,7 +93,8 @@ preserving weights. `pull` and `add` leave the running server alone; use `reload
 to apply new registrations to automatic routing when ready.
 Use `--backend omni` for Omni. Model files and settings are shared between modes;
 llama-swap is downloaded only when enabled. `localvllm ui --open` opens the
-API documentation or model dashboard for the current mode. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
+API documentation or model dashboard for the current mode. The backend must
+already be running; `ui --open` never starts it and prints a start command if stopped. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
 
 Already installed and Omni reports a Python error? Run `localvllm update
 --scripts-only`, then retry `localvllm backend install omni`.

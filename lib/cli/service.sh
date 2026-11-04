@@ -424,6 +424,7 @@ logs_cmd() {
     echo 'install-packages-*.log / update-packages-*.log: package resolver output'
     echo 'manager-events.log: command names, backend and exit status (no arguments)'
     echo 'service-*.log: systemd output saved by logs --service'
+    echo 'browser.log: desktop browser launcher diagnostics'
     echo 'Timestamped files are earlier sessions; pip-install-*.log are legacy package logs.'
     if [ -d "$root" ]; then find "$root" -maxdepth 1 -type f -name '*.log*' -printf '%f\n' | sort; fi
     echo 'View: localvllm logs --file NAME --no-follow; live output: omit --no-follow (Ctrl+C stops).'
