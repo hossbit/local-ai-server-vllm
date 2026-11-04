@@ -225,7 +225,7 @@ models_cmd() {
       echo "Override file: $ACTIVE_OVERRIDE"
     fi
   else
-    echo "No active model selected. Run: localvllm use MODEL"
+    echo "No direct-mode model selected. Run: localvllm use MODEL"
   fi
 
   if service_is_active; then
@@ -353,7 +353,7 @@ use_cmd() {
   fi
 
   echo "Backend: $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
-  echo "Active model: $id"
+  echo "Selected model: $id"
   echo "Model: $spec"
   [ -n "$entry_source" ] && echo "Source: $entry_source"
   [ -n "$override" ] && echo "Override file: $override"

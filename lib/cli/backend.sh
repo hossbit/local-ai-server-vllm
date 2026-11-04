@@ -1,4 +1,4 @@
-# shellcheck shell=bash disable=SC2154
+# shellcheck shell=bash disable=SC2153,SC2154
 
 backend_usage() {
   cat <<EOF
@@ -45,7 +45,7 @@ backend_list_cmd() {
   [ "$#" -eq 0 ] || fail "usage: localvllm backend list"
 
   printf '%-3s %-7s %-9s %-18s %-6s %-13s %s\n' \
-    "" "BACKEND" "INSTALLED" "VERSION" "PORT" "SERVICE" "ACTIVE MODEL"
+    "" "BACKEND" "INSTALLED" "VERSION" "PORT" "SERVICE" "CONFIGURED MODEL"
 
   while IFS= read -r name; do
     localvllm_use_backend "$name" || continue
@@ -69,7 +69,8 @@ backend_list_cmd() {
       service_status="not installed"
     fi
 
-    active_id="$(serve_env_value LOCALVLLM_ACTIVE_ID)"
+    active_id=""
+    if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" 2>/dev/null; then active_id="$ACTIVE_ID"; fi
     model="${active_id:--}"
 
     default_marker=""
@@ -80,7 +81,8 @@ backend_list_cmd() {
   done < <(localvllm_backend_list)
 
   echo
-  echo "* = default backend (used when --backend is omitted)"
+  echo "* = default backend (used when --backend is omitted); it is not necessarily running."
+  echo "View live models: localvllm --backend BACKEND models"
   echo "Engine packages: vllm (plain vLLM), omni (vllm-omni with --omni)"
   echo "Both backends use separate venvs, models, keys, ports, and services."
 

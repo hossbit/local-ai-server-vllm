@@ -114,9 +114,8 @@ case "$COMMAND" in
 esac
 
 case "$COMMAND" in
-  menu|setup)
-    menu_cmd "$@"
-    ;;
+  menu) menu_cmd "$@" ;;
+  setup) setup_cmd "$@" ;;
   start|stop|restart)
     service_cmd "$COMMAND" "$@"
     ;;

@@ -1158,14 +1158,23 @@ localvllm_serving_mode() {
 }
 
 localvllm_require_start_model() {
+  if ! localvllm_backend_installed "$LOCALVLLM_BACKEND"; then
+    echo "Error: backend $LOCALVLLM_BACKEND is not installed or is incomplete." >&2
+    echo "Next: localvllm backend install $LOCALVLLM_BACKEND" >&2
+    echo "Guide: localvllm --backend $LOCALVLLM_BACKEND help paths" >&2
+    return 1
+  fi
   if [ "$(localvllm_serving_mode)" = swap ]; then
     localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR" && return 0
-    echo "Add a model first with 'localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL'." >&2
+    echo "Error: no models are registered for $LOCALVLLM_BACKEND in automatic mode." >&2
+    echo "Next: localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL" >&2
+    echo "Or: localvllm --backend $LOCALVLLM_BACKEND add /path/to/model" >&2
+    echo "Then: localvllm --backend $LOCALVLLM_BACKEND start" >&2
     return 1
   fi
   if ! localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR"; then
     echo "Select a model for the $LOCALVLLM_BACKEND backend before starting it." >&2
-    echo "Guided setup: localvllm setup" >&2
+    echo "Guided setup: localvllm setup (choose $LOCALVLLM_BACKEND)" >&2
     echo "Or select one: localvllm --backend $LOCALVLLM_BACKEND use MODEL" >&2
     echo "Then start: localvllm start $LOCALVLLM_BACKEND" >&2
     return 1

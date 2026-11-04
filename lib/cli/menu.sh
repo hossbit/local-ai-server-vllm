@@ -205,6 +205,88 @@ menu_loop() {
   done
 }
 
+setup_flow() {
+  local engine mode source model answer previous_backend="$LOCALVLLM_BACKEND"
+  echo 'Guided setup — choose a backend, serving method, and model.'
+  echo 'Nothing is started automatically. You can always use the independent commands instead.'
+  echo '1) vLLM — text, coding, supported vision input, embeddings and reranking'
+  echo '2) Omni — supported image/audio/video generation; model-specific recipes may be required'
+  printf 'Backend [1/2, empty cancels]: '; read -r engine || return 0
+  case "$engine" in 1) engine=vllm ;; 2) engine=omni ;; '') return 0 ;; *) echo 'Error: choose 1 or 2. Retry: localvllm setup' >&2; return 1 ;; esac
+  localvllm_use_backend "$engine" || return 1
+  if service_is_active; then
+    echo "Error: $engine is running. Setup will not restart it or interrupt requests." >&2
+    echo "Next: localvllm --backend $engine stop, then localvllm setup" >&2
+    localvllm_use_backend "$previous_backend"
+    return 1
+  fi
+  echo '1) Direct/manual — choose one model yourself (recommended starting point)'
+  echo '2) Automatic switching — clients choose model IDs; adds llama-swap and a dashboard'
+  printf 'Serving method [1/2, default 1]: '; read -r mode || return 0
+  case "$mode" in ''|1) mode=direct ;; 2) mode=swap ;; *) echo 'Error: choose 1 or 2. Retry: localvllm setup' >&2; return 1 ;; esac
+  echo '1) Download a Hugging Face model'
+  echo '2) Use your own complete model folder'
+  echo '3) Choose a model already registered in this backend'
+  printf 'Model source [1/2/3, empty cancels]: '; read -r source || return 0
+  case "$source" in
+    1) printf 'Hugging Face ID (ORG/MODEL): ' ;;
+    2) printf 'Complete model folder path: ' ;;
+    3) menu_run models || return 1; printf 'Registered model ID: ' ;;
+    '') return 0 ;;
+    *) echo 'Error: choose 1, 2, or 3. Retry: localvllm setup' >&2; return 1 ;;
+  esac
+  read -r model || return 0
+  [ -n "$model" ] || { echo 'Cancelled; no configuration was changed.'; return 0; }
+  if [ "$source" = 1 ] && ! [[ "$model" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]]; then
+    echo 'Error: enter a Hugging Face ID such as ORG/MODEL. No configuration was changed.' >&2; return 1
+  fi
+  if [ "$source" = 2 ]; then
+    model="$(expand_path "$model")"
+    if [ ! -d "$model" ] || ! { [ -f "$model/config.json" ] || [ -f "$model/model_index.json" ]; }; then
+      echo 'Error: choose a complete model folder with config.json or model_index.json.' >&2
+      echo "Next: localvllm --backend $engine help models" >&2; return 1
+    fi
+  fi
+  if [ "$source" = 3 ] && ! localvllm_find_entry "$MODELS_DIR" "$model" "$OVERRIDES_DIR" >/dev/null 2>&1; then
+    echo "Error: model is not registered for $engine. Next: localvllm --backend $engine models" >&2; return 1
+  fi
+  echo "Plan: backend=$engine; serving=$mode; model=$model"
+  echo 'Missing engine packages may be installed after an explicit prompt.'
+  [ "$source" != 1 ] || echo 'This downloads model files; check disk space and model access first.'
+  [ "$mode" != swap ] || echo 'Enabling automatic switching may download the verified llama-swap binary.'
+  echo 'The final step saves this backend as your default. Services remain stopped.'
+  printf 'Apply this setup? [y/N]: '; read -r answer || return 0
+  case "$answer" in y|Y|yes) ;; *) echo 'Cancelled; no configuration was changed.'; return 0 ;; esac
+  localvllm_acquire_global_lock
+  if service_is_active; then
+    echo "Error: $engine was started while setup was open; no setup commands were applied." >&2
+    echo "Next: localvllm --backend $engine stop, then retry setup when ready." >&2
+    return 1
+  fi
+  menu_ensure_engine || return 1
+  if [ "$source" = 1 ]; then menu_run pull "$model" || return 1; fi
+  menu_run use "$model" || return 1
+  menu_run mode "$mode" || return 1
+  menu_run backend default "$engine" || return 1
+  echo "Configured $engine in $mode mode. No service or model was started."
+  echo "Next: localvllm --backend $engine start"
+  echo "Check: localvllm --backend $engine status"
+  if [ "$mode" = swap ]; then echo 'Clients send a registered model ID in each request; ui opens the model dashboard.'
+  else echo 'Clients use the selected model; ui opens API documentation, not a chat interface.'; fi
+  echo "After starting: localvllm --backend $engine ui --open"
+}
+
+setup_cmd() {
+  if [ "$#" = 1 ] && { [ "$1" = --help ] || [ "$1" = -h ]; }; then help_topic paths; return; fi
+  [ "$#" = 0 ] || fail 'usage: localvllm setup'
+  if [ ! -t 0 ] || [ ! -t 1 ]; then
+    echo 'Error: guided setup needs an interactive terminal.' >&2
+    echo 'Next: localvllm help paths for independent commands usable in scripts.' >&2
+    return 1
+  fi
+  setup_flow
+}
+
 menu_cmd() {
   [ "$#" = 0 ] || fail 'usage: localvllm menu'
   if [ ! -t 0 ] || [ ! -t 1 ]; then

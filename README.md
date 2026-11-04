@@ -72,29 +72,51 @@ Python. Installation may request sudo and needs internet and disk space. Then op
 localvllm
 ```
 
-Running `localvllm` shows the command reference, like `localai`.
-For interactive model management, run `localvllm menu`.
+`localvllm` shows commands. For a guided first setup, run **`localvllm setup`**;
+for later interactive management, use `localvllm menu`. Neither is required.
 
-The guided menu lets you download a Hugging Face model, add an existing folder,
-choose vLLM or Omni, and start or stop the server. It installs the chosen engine
-when needed. Choose a model supported by that engine and sized for your GPU.
-`localvllm setup` and `localvllm menu` open the same menu.
+### Choose your path
 
-| Serving mode | What users get |
+```mermaid
+flowchart TD
+    A[Install Local vLLM] --> B{How do you want to configure it?}
+    B --> C[Guided: localvllm setup]
+    B --> D[Independent commands below]
+    C --> E[Choose engine: vLLM or Omni]
+    D --> E
+    E --> F[Download or register a compatible model]
+    F --> G{Serving method}
+    G --> H[Direct: select one model yourself]
+    G --> I[Swap: clients request any registered model]
+    H --> J[Start explicitly when ready]
+    I --> J
+    J --> K[Check status and connect your client]
+```
+
+**The engine and serving method are separate choices.** vLLM handles text,
+coding and supported vision-input/embedding models; Omni handles supported
+multimodal generation and may need a model-specific recipe. Both support direct
+and swap modes. Select models compatible with the chosen engine and your GPU.
+
+| Independent path | Steps after installation |
 | --- | --- |
-| **Direct (default)** | Clients connect straight to vLLM or Omni; one selected model per backend. |
-| **Automatic switching (optional)** | llama-swap loads the requested model behind the same API address, with a model dashboard. |
+| **Direct/manual (default)** | `pull ORG/MODEL` or `add /path/to/model` → `use MODEL` → `mode direct` → `start` |
+| **Automatic switching** | `pull ORG/MODEL` or `add /path/to/model` → `mode swap` → `start` |
 
-Change modes from the menu, or run `localvllm mode swap` / `localvllm mode direct`.
-The menu, `localvllm models`, `status --json`, and `version` distinguish loaded
-models from your saved selection for both vLLM and Omni. The menu also offers
-selectable example models, download guidance, and removal of registrations while
-preserving weights. `pull` and `add` leave the running server alone; use `reload`
-to apply new registrations to automatic routing when ready.
-Use `--backend omni` for Omni. Model files and settings are shared between modes;
-llama-swap is downloaded only when enabled. `localvllm ui --open` opens the
-API documentation or model dashboard for the current mode. The backend must
-already be running; `ui --open` never starts it and prints a start command if stopped. [Mode guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#serving-modes).
+Prefix every step with `localvllm --backend vllm` or `localvllm --backend omni`.
+For Omni, install its engine first with `localvllm backend install omni`.
+Use `localvllm backend default omni` to persist your choice; a one-command
+`--backend` override does not change it. The default engine need not be running.
+
+Downloads and registration leave serving alone. For models added to an already
+running router, use `reload` when ready; it may interrupt active requests.
+Setup configures a stopped backend and leaves it stopped. It never starts a
+service or model. If the chosen backend is running, it tells you to stop it first.
+
+`ui --open` requires an already running backend: direct opens **API docs**
+(`/docs`, not chat); swap opens the **model dashboard** (`/ui`). If stopped,
+it prints a backend-specific start command without opening a dead page.
+See `localvllm help paths` or the [workflow guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#choose-your-workflow).
 
 Already installed and Omni reports a Python error? Run `localvllm update
 --scripts-only`, then retry `localvllm backend install omni`.
@@ -151,7 +173,8 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 
 ```bash
 localvllm                       # Show available commands
-localvllm menu                  # Optional guided model management
+localvllm setup                 # Guided first configuration; no service startup
+localvllm menu                  # Optional interactive management
 localvllm pull ORG/MODEL        # Download a model without switching the server
 localvllm add /path/to/model    # Register a complete existing folder
 localvllm mode                 # Show direct or automatic serving mode

@@ -35,12 +35,12 @@ Commands:
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
   menu                   Manage models and serving mode interactively
-  setup                  Open the guided model menu
+  setup                  Guided backend, serving method and model configuration; no auto-start
   pull ORG/MODEL         Download/register a model without changing the active one
   add /path/to/model     Register an existing folder without copying it
   remove MODEL           Remove a stopped backend model registration; preserve weights
   mode [direct|swap]     Show/change this backend's serving mode
-  help [TOPIC]           Help: models, modes, keys, logs, metrics, troubleshoot
+  help [TOPIC]           Help: paths, models, modes, keys, logs, metrics, troubleshoot
 
 Common workflows:
   localvllm models                         # Your models and storage
@@ -50,7 +50,7 @@ Common workflows:
   localvllm --backend omni models          # Same commands for Omni
   localvllm menu                           # Optional interactive interface
 
-Need help? localvllm help models | modes | keys | logs | metrics | troubleshoot
+Need help? localvllm help paths | models | modes | keys | logs | metrics | troubleshoot
 Full guide: https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md
 EOF
 }
@@ -60,6 +60,25 @@ help_topic() {
   [ "$#" -le 1 ] || fail 'usage: localvllm help [TOPIC]'
   case "$topic" in
     '') usage ;;
+    paths)
+      cat <<EOF
+Choose a workflow — setup is optional; commands work independently.
+  localvllm setup                       Guided setup; leaves services stopped
+  localvllm backend list                See both engines and the default marker
+  localvllm backend default omni        Persist the default used by bare commands
+  localvllm --backend vllm COMMAND       Target text engine without changing the default
+  localvllm --backend omni COMMAND      Target Omni without changing the default
+
+Direct/manual: install engine -> pull/add model -> use MODEL -> mode direct -> start
+Automatic: install engine -> pull/add models -> mode swap -> start
+After adding models to an already running router: reload when ready (may restart it).
+Use --backend omni on every step for Omni; its model-specific deployment recipe may need tuning.
+
+Stopped service? ui and metrics do not start it. Start explicitly when ready.
+Direct ui: API documentation (/docs). Swap ui: model dashboard (/ui).
+Diagnosis: status -> doctor all -> logs --no-follow -> logs --service --no-follow.
+EOF
+      ;;
     models)
       cat <<EOF
 Models — use --backend omni for the separate Omni library.
@@ -142,7 +161,17 @@ EOF
 }
 
 fail() {
+  local topic=troubleshoot
+  case "${COMMAND:-}" in
+    start|restart|setup|backend) topic=paths ;;
+    key) topic=keys ;;
+    use|switch|pull|add|remove|models) topic=models ;;
+    mode|ui) topic=modes ;;
+    logs) topic=logs ;;
+    metrics) topic=metrics ;;
+  esac
   echo "Error: $*" >&2
+  echo "Guide: localvllm --backend ${LOCALVLLM_BACKEND:-vllm} help $topic" >&2
   exit 1
 }
 
