@@ -94,7 +94,6 @@ done
 set -- "${ARGS[@]}"
 
 COMMAND="${1:-help}"
-if [ "$#" = 0 ] && [ -t 0 ] && [ -t 1 ]; then COMMAND=menu; fi
 if [ "$#" -gt 0 ]; then
   shift
 fi

@@ -10,12 +10,6 @@ Backends (isolated venv, models, port, keys, and service):
   all         both backends, where the command supports it
 
 Commands:
-  menu                   Manage models and serving mode interactively
-  setup                  Open the guided model menu
-  pull ORG/MODEL         Download/register a model without changing the active one
-  add /path/to/model     Register an existing folder without copying it
-  remove MODEL           Remove a stopped backend model registration; preserve weights
-  mode [direct|swap]     Show/change this backend's serving mode
   start [BACKEND|all]    Start one or both services
   stop [BACKEND|all]     Stop one or both services and release GPU memory
   restart [BACKEND|all]  Restart one or both services
@@ -40,6 +34,12 @@ Commands:
   update [--all]         Update selected backend, router and helpers; --all updates every backend
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
+  menu                   Manage models and serving mode interactively
+  setup                  Open the guided model menu
+  pull ORG/MODEL         Download/register a model without changing the active one
+  add /path/to/model     Register an existing folder without copying it
+  remove MODEL           Remove a stopped backend model registration; preserve weights
+  mode [direct|swap]     Show/change this backend's serving mode
   help                   Show this help
 
 Examples:

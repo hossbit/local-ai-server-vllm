@@ -72,6 +72,9 @@ Python. Installation may request sudo and needs internet and disk space. Then op
 localvllm
 ```
 
+Running `localvllm` shows the command reference, like `localai`.
+For interactive model management, run `localvllm menu`.
+
 The guided menu lets you download a Hugging Face model, add an existing folder,
 choose vLLM or Omni, and start or stop the server. It installs the chosen engine
 when needed. Choose a model supported by that engine and sized for your GPU.
@@ -146,7 +149,8 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 ## Common commands
 
 ```bash
-localvllm                       # Guided model management
+localvllm                       # Show available commands
+localvllm menu                  # Optional guided model management
 localvllm pull ORG/MODEL        # Download a model without switching the server
 localvllm add /path/to/model    # Register a complete existing folder
 localvllm mode                 # Show direct or automatic serving mode
