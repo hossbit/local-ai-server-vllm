@@ -356,8 +356,8 @@ metrics_cmd() {
       if [ "$total" -gt 0 ]; then echo "GPU memory (smallest visible device): total $(format_bytes_gib "$total"), free $(format_bytes_gib "$free")"; fi
       now="$(date +%s)"
       if [ "$mode" = swap ]; then
-        if ! payload="$(curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/running")" || ! jq -e '.running | type == "array"' >/dev/null 2>&1 <<< "$payload"; then
-          echo 'Router unavailable. Check status, API key access, and logs --no-follow.' >&2
+        if ! payload="$(curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/running" 2>/dev/null)" || ! jq -e '.running | type == "array"' >/dev/null 2>&1 <<< "$payload"; then
+          echo 'Router unavailable or stopped. Check status, API key access, and logs --no-follow.' >&2
           [ "$watch" = 1 ] || return 1
         else
           found=0
