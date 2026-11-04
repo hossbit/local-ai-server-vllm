@@ -79,18 +79,34 @@ for later interactive management, use `localvllm menu`. Neither is required.
 
 ```mermaid
 flowchart TD
-    A[Install Local vLLM] --> B{How do you want to configure it?}
-    B --> C[Guided: localvllm setup]
-    B --> D[Independent commands below]
-    C --> E[Choose engine: vLLM or Omni]
+    A(["🐧 Install Local vLLM"]) --> B{"Choose your setup path"}
+    B --> C["🧭 Guided setup<br/>localvllm setup"]
+    B --> D["🛠️ Independent commands"]
+    C --> E["Choose your engine<br/><b>vLLM · Omni</b>"]
     D --> E
-    E --> F[Download or register a compatible model]
-    F --> G{Serving method}
-    G --> H[Direct: select one model yourself]
-    G --> I[Swap: clients request any registered model]
-    H --> J[Start explicitly when ready]
+    E --> F["📦 Download or register<br/>a compatible model"]
+    F --> G{"Choose how to serve"}
+    G --> H["🎯 Direct / manual<br/>You select one model"]
+    G --> I["🔄 Automatic / swap<br/>Clients choose registered models"]
+    H --> J["▶ Start when you are ready<br/>localvllm start"]
     I --> J
-    J --> K[Check status and connect your client]
+    J --> K(["✨ Check status<br/>Connect your client"])
+
+    classDef welcome fill:#fff2b3,stroke:#b77908,color:#493408,stroke-width:2px
+    classDef choice fill:#ffe5d9,stroke:#c16645,color:#542c20,stroke-width:2px
+    classDef setup fill:#eee8ff,stroke:#8063b8,color:#39295c,stroke-width:1.5px
+    classDef model fill:#dcf3ee,stroke:#398875,color:#194d40,stroke-width:1.5px
+    classDef direct fill:#e1efff,stroke:#5083b8,color:#234569,stroke-width:1.5px
+    classDef swap fill:#fce5f1,stroke:#ae628b,color:#61354e,stroke-width:1.5px
+    classDef ready fill:#e6f5d8,stroke:#608b3c,color:#314d1f,stroke-width:2px
+
+    class A welcome
+    class B,G choice
+    class C,D setup
+    class E,F model
+    class H direct
+    class I swap
+    class J,K ready
 ```
 
 **The engine and serving method are separate choices.** vLLM handles text,
