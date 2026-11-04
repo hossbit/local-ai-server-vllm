@@ -108,6 +108,8 @@ fi
 case "$COMMAND" in
   mode|pull|add|remove|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
     localvllm_acquire_global_lock
+    # shellcheck disable=SC2153 # Backend is selected by localvllm_use_backend.
+    trap 'localvllm_log_event "$?" "$COMMAND" "$LOCALVLLM_BACKEND" || true' EXIT
     ;;
 esac
 
@@ -174,7 +176,7 @@ case "$COMMAND" in
     uninstall_cmd "$@"
     ;;
   help|-h|--help)
-    usage
+    help_topic "$@"
     ;;
   *)
     usage >&2

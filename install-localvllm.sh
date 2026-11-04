@@ -333,7 +333,7 @@ install_backend() {
     target_venv="$VENV_DIR"
   fi
 
-  pip_log="$LOGS_DIR/pip-install-$name.log"
+  pip_log="$LOGS_DIR/install-packages-$name.log"
   : > "$pip_log"
 
   vllm_bootstrap_pip "$target_venv" "$pip_log" || install_status=1
@@ -423,6 +423,8 @@ localvllm_acquire_global_lock
 
 mkdir -p "$AI_DIR" "$BIN_DIR" "$LIB_DIR" "$CONF_ROOT" "$MODELS_ROOT" "$VENV_ROOT" "$LOGS_DIR"
 mkdir -p "$CONF_ROOT/$LOCALVLLM_BACKEND_PROFILES_SUBDIR" "$CONF_ROOT/$LOCALVLLM_BACKENDS_STATE_SUBDIR"
+
+localvllm_operation_log install
 
 TARGET_DEVICE="$(vllm_detect_target_device)"
 if [ "$TARGET_DEVICE" = "cpu" ] && [ "${VLLM_ALLOW_CPU:-0}" != "1" ]; then

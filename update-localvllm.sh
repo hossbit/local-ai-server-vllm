@@ -48,6 +48,7 @@ STAGED_CLI=""
 
 localvllm_capture_global_runtime
 localvllm_acquire_global_lock
+localvllm_operation_log update
 
 log() {
   printf '\n==> %s\n' "$*"
@@ -413,7 +414,7 @@ declare -A OLD_VENVS=()
 update_backend_package() {
   local backend="$1"
   local need="$2"
-  local pip_log="$AI_DIR/$LOCALVLLM_LOGS_SUBDIR/pip-install-$backend.log"
+  local pip_log="$AI_DIR/$LOCALVLLM_LOGS_SUBDIR/update-packages-$backend.log"
   local stage_venv old_venv=""
 
   [ "$need" = "none" ] && return 0

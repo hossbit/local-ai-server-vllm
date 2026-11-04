@@ -1362,3 +1362,39 @@ api_key_registry_write_atomic() {
   fi
   mv -f "$tmp" "$file"
 }
+
+# Logs never record CLI arguments: key/token arguments must not enter an audit log.
+localvllm_rotate_log() {
+  local file="$1" keep="${LOCALVLLM_LOG_KEEP:-5}" old
+  [ -s "$file" ] || return 0
+  [[ "$keep" =~ ^[0-9]+$ ]] || keep=5
+  mv -- "$file" "$file.$(date -u +%Y%m%dT%H%M%S.%NZ).$$" || return 1
+  local -a archives=()
+  mapfile -t archives < <(find "$(dirname "$file")" -maxdepth 1 -type f -name "$(basename "$file").*" -print | sort -r)
+  for old in "${archives[@]:$keep}"; do rm -f -- "$old"; done
+}
+
+localvllm_operation_log() {
+  local kind="$1" root="$AI_DIR/${LOCALVLLM_LOGS_SUBDIR:-logs}" file
+  mkdir -p "$root" || return 1
+  file="$root/$kind.log"
+  localvllm_rotate_log "$file" || return 1
+  (umask 077; : > "$file") || return 1
+  chmod 600 "$file"
+  # tee must not retain the manager lock; updates/installers hold FD 9.
+  exec > >(tee -a "$file" 9>&-) 2>&1
+  printf '\n[%s] %s started\n' "$(date -u +%FT%TZ)" "$kind"
+}
+
+localvllm_log_event() (
+  umask 077
+  local result="$1" command_name="$2" backend="$3" root="$AI_DIR/${LOCALVLLM_LOGS_SUBDIR:-logs}" file
+  mkdir -p "$root" || return 0
+  file="$root/manager-events.log"
+  # Serialize short audit writes independently of the manager's global lock.
+  exec 8>"$root/.events.lock"
+  flock -w 2 8 || return 0
+  if [ -f "$file" ] && [ "$(stat -c %s "$file")" -gt 2097152 ]; then localvllm_rotate_log "$file" || return 0; fi
+  printf '%s command=%q backend=%q exit=%s\n' "$(date -u +%FT%TZ)" "$command_name" "$backend" "$result" >> "$file"
+  chmod 600 "$file"
+)

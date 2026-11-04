@@ -182,6 +182,20 @@ Servers listen on `127.0.0.1` by default. API keys do not protect every vLLM
 endpoint. For network access, use a TLS reverse proxy with authentication.
 Read the [security guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#security) before exposing a server.
 
+## Help, logs and monitoring
+
+```bash
+localvllm help                     # Commands and common workflows
+localvllm help models              # Also: modes, keys, logs, metrics, troubleshoot
+localvllm logs --list              # All log files in one place
+localvllm logs all --no-follow     # Recent output from all current files
+localvllm metrics --watch          # Readable queue, cache and token statistics
+```
+
+Logs live in `~/ai-vllm/logs/` by default (`localvllm logs --path` shows your
+actual directory). Use `--backend omni` for Omni. Metrics observe ready models
+without loading them; `--raw` retains the native Prometheus output.
+
 ## Documentation
 
 - [Getting started](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md) — install, choose a model, and run the server.

@@ -150,14 +150,10 @@ case "$LOCALVLLM_LISTEN_HOST" in
 esac
 
 # Rotate instead of truncating so the previous startup failure stays readable.
-if [ -s "$LOG_FILE" ]; then
-  rotated="$LOG_FILE.$(date -u +%Y%m%dT%H%M%SZ)"
-  mv -f "$LOG_FILE" "$rotated" || true
-  find "$(dirname "$LOG_FILE")" -maxdepth 1 -type f -name "$(basename "$LOG_FILE").*" -print 2>/dev/null |
-    sort -r |
-    tail -n +$((${LOCALVLLM_LOG_KEEP:-5} + 1)) |
-    while IFS= read -r old_log; do rm -f "$old_log"; done
-fi
+localvllm_rotate_log "$LOG_FILE"
+
+(umask 077; touch "$LOG_FILE")
+chmod 600 "$LOG_FILE"
 
 PROCESS_GROUP=0
 if command -v setsid >/dev/null 2>&1; then

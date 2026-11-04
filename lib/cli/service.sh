@@ -291,66 +291,173 @@ check_one() {
   fi
 }
 
-metrics_cmd() {
-  local selector watch=0 arg base response
-  local -a args=()
+metrics_summary() {
+  local response="$1" previous="${2:-}" elapsed="${3:-0}" key value rate='n/a (use --watch)'
+  local -A values=()
+  while IFS=$'\t' read -r key value; do values["$key"]="$value"; done < <(
+    awk '
+      /^[^#]/ {
+        line=$0; sub(/\{.*\}/,"",line); split(line,a," "); name=a[1]; v=a[2]
+        if (v !~ /^[-+]?[0-9]*[.]?[0-9]+([eE][-+]?[0-9]+)?$/) next
+        sum[name]+=v; seen[name]=1
+        if (name=="vllm:kv_cache_usage_perc" || name=="vllm:gpu_cache_usage_perc") {
+          if (!cache_seen || v>cache) cache=v; cache_seen=1
+        }
+      }
+      function metric(label,name) { printf "%s\t%s\n",label,(seen[name]?sum[name]:"n/a") }
+      END {
+        metric("running","vllm:num_requests_running"); metric("waiting","vllm:num_requests_waiting")
+        metric("generated","vllm:generation_tokens_total"); metric("prompt","vllm:prompt_tokens_total")
+        metric("requests","vllm:request_success_total")
+        printf "cache\t%s\n",(cache_seen?sprintf("%.1f%%",cache*100):"n/a")
+        n="vllm:time_to_first_token_seconds_count"; t="vllm:time_to_first_token_seconds_sum"
+        printf "ttft\t%s\n",(sum[n]>0?sprintf("%.3f s",sum[t]/sum[n]):"n/a")
+      }' <<< "$response"
+  )
+  METRICS_CURRENT_GENERATED="${values[generated]}"
+  if [ "$elapsed" -gt 0 ] && [ -n "$previous" ] && [ "$previous" != n/a ] && [ "$METRICS_CURRENT_GENERATED" != n/a ]; then
+    rate="$(awk -v old="$previous" -v now="$METRICS_CURRENT_GENERATED" -v seconds="$elapsed" 'BEGIN {if(now>=old) printf "%.1f tokens/s (sampled)",(now-old)/seconds; else printf "n/a (counter reset)"}')"
+  fi
+  printf '  Running requests: %s | Waiting: %s | KV cache (peak): %s\n' "${values[running]}" "${values[waiting]}" "${values[cache]}"
+  printf '  Completed requests: %s | Input tokens: %s | Generated tokens: %s\n' "${values[requests]}" "${values[prompt]}" "${values[generated]}"
+  printf '  Generation rate: %s | Mean first-token latency: %s\n' "$rate" "${values[ttft]}"
+}
 
+metrics_cmd() {
+  local selector watch=0 raw=0 arg base response mode payload model proxy now key elapsed total free found
+  local interval=2
+  local -a args=()
+  local -A previous=() sampled=()
   for arg in "$@"; do
     case "$arg" in
       --watch) watch=1 ;;
+      --raw) raw=1 ;;
+      -h|--help) help_topic metrics; return ;;
       all|vllm|omni|text|llm|vllm-omni|vllm_omni|omni-vllm) args+=("$arg") ;;
-      *) fail "usage: localvllm metrics [--watch] [BACKEND]" ;;
+      *) fail 'usage: localvllm metrics [BACKEND] [--watch] [--raw]' ;;
     esac
   done
-  [ "${#args[@]}" -le 1 ] || fail "usage: localvllm metrics [--watch] [BACKEND]"
+  [ "${#args[@]}" -le 1 ] || fail 'choose one backend'
   selector="$(localvllm_resolve_selector "${args[0]:-}")" || return 1
-  [ "$selector" != "all" ] || fail "choose one backend: localvllm metrics vllm | localvllm metrics omni"
+  [ "$selector" != all ] || fail 'choose vllm or omni for metrics'
   localvllm_use_backend "$selector" || return 1
-
   require_api_tools
   base="$(api_base_url)"
   api_auth_curl_args
-
   while :; do
-    if ! response="$(curl "${AUTH_CURL_ARGS[@]}" --max-time 10 -fsS "$base/metrics")"; then
-      echo "Error: /metrics is not available at $base/metrics" >&2
-      return 1
+    mode="$(localvllm_serving_mode)" || return 1
+    if [ "$raw" = 1 ]; then
+      curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/metrics" || return 1
+    else
+      if [ "$watch" = 1 ] && [ -t 1 ]; then printf '\033[H\033[2J'; fi
+      echo "Local $LOCALVLLM_BACKEND_LABEL | $mode | $(date -u +%FT%TZ)"
+      echo "API: $base | Observation only; no model is loaded by this command."
+      total="$(gpu_vram_total_min_bytes)"; free="$(gpu_vram_free_min_bytes)"
+      if [ "$total" -gt 0 ]; then echo "GPU memory (smallest visible device): total $(format_bytes_gib "$total"), free $(format_bytes_gib "$free")"; fi
+      now="$(date +%s)"
+      if [ "$mode" = swap ]; then
+        if ! payload="$(curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/running")" || ! jq -e '.running | type == "array"' >/dev/null 2>&1 <<< "$payload"; then
+          echo 'Router unavailable. Check status, API key access, and logs --no-follow.' >&2
+          [ "$watch" = 1 ] || return 1
+        else
+          found=0
+          while IFS=$'\t' read -r model proxy; do
+            [ -n "$model" ] || continue
+            found=1; echo "Loaded model: $model"
+            # Query the worker directly: /upstream/MODEL/metrics could wake it.
+            if ! [[ "$proxy" =~ ^http://127\.0\.0\.1:[0-9]{1,5}$ ]]; then echo '  Worker metrics unavailable (unsupported worker URL).'; continue; fi
+            key="$model|$proxy"
+            if response="$(curl --max-time 3 -fsS "$proxy/metrics" 2>/dev/null)"; then
+              elapsed=$((now - ${sampled[$key]:-$now}))
+              metrics_summary "$response" "${previous[$key]:-}" "$elapsed"
+              previous["$key"]="$METRICS_CURRENT_GENERATED"; sampled["$key"]="$now"
+            else echo '  Worker metrics unavailable (loading/unloading, or endpoint unsupported).'; unset 'previous[$key]' 'sampled[$key]'; fi
+          done < <(jq -r '.running[] | select(.state == "ready") | [.model,.proxy] | @tsv' <<< "$payload")
+          if [ "$found" = 0 ]; then
+            echo 'No ready model. Models may be unloaded or still loading; no inference was requested.'
+            previous=(); sampled=()
+          fi
+        fi
+      elif response="$(curl "${AUTH_CURL_ARGS[@]}" --max-time 5 -fsS "$base/metrics" 2>/dev/null)"; then
+        echo 'Engine metrics: API reachable'
+        echo "Model labels: $(grep -oE 'model_name="[^"]*"' <<< "$response" | sort -u | paste -sd ' ' - || true)"
+        elapsed=$((now - ${sampled[direct]:-$now}))
+        metrics_summary "$response" "${previous[direct]:-}" "$elapsed"
+        previous[direct]="$METRICS_CURRENT_GENERATED"; sampled[direct]="$now"
+      else
+        echo 'Engine metrics unavailable. Check status, API key access, and logs --no-follow.' >&2
+        [ "$watch" = 1 ] || return 1
+        previous=(); sampled=()
+      fi
+      echo 'Counters and mean latency are cumulative per worker process. n/a means not exposed yet.'
+      [ "$LOCALVLLM_BACKEND" != omni ] || echo 'Omni stage-specific audio/image/video metrics vary by model; --raw preserves the native endpoint.'
     fi
-    if [ "$watch" -eq 0 ]; then
-      grep -E '^(# (HELP|TYPE) )?vllm:' <<<"$response" || printf '%s\n' "$response"
-      return 0
-    fi
-    clear 2>/dev/null || true
-    echo "Local $LOCALVLLM_BACKEND_LABEL metrics ($(date -u +%H:%M:%SZ))"
-    grep -E '^(# (HELP|TYPE) )?vllm:' <<<"$response" || printf '%s\n' "$response"
-    sleep 2
+    [ "$watch" = 1 ] || return 0
+    sleep "$interval"
   done
 }
 
 logs_cmd() {
-  local selector
-
-  [ "$#" -le 1 ] || fail "usage: localvllm logs [BACKEND]"
-  selector="$(localvllm_resolve_selector "${1:-}")" || return 1
-  if [ "$selector" = "all" ]; then
-    fail "choose one backend: localvllm logs vllm | localvllm logs omni"
-  fi
-  localvllm_use_backend "$selector" || return 1
-
-  # vLLM's stdout/stderr is redirected to the backend log file by start.sh.
-  # Prefer that file for useful output; fall back to journalctl only when it
-  # does not exist yet.
-  if [ -f "$LOG_FILE" ]; then
-    tail -f "$LOG_FILE"
+  local selector="" root="$AI_DIR/${LOCALVLLM_LOGS_SUBDIR:-logs}" lines=80 follow=1 list=0 path=0 service=0 file="" arg
+  local -a files=() journal_args=()
+  while [ "$#" -gt 0 ]; do
+    arg="$1"; shift
+    case "$arg" in
+      --list) list=1 ;;
+      --path) path=1 ;;
+      --no-follow) follow=0 ;;
+      --service) service=1 ;;
+      --lines|-n) [ "$#" -gt 0 ] || fail 'missing line count'; lines="$1"; shift ;;
+      --file) [ "$#" -gt 0 ] || fail 'missing log filename'; file="$1"; shift ;;
+      -h|--help) help_topic logs; return ;;
+      vllm|omni|all) [ -z "$selector" ] || fail 'choose only one backend'; selector="$arg" ;;
+      *) fail 'usage: localvllm logs [vllm|omni|all] [--list|--path|--service|--file NAME] [--no-follow] [--lines N]' ;;
+    esac
+  done
+  if ! [[ "$lines" =~ ^[0-9]{1,5}$ ]] || ! ((10#$lines > 0 && 10#$lines <= 10000)); then fail 'line count must be 1–10000'; fi
+  lines=$((10#$lines))
+  [ "$path" = 0 ] || { echo "$root"; return; }
+  if [ "$list" = 1 ]; then
+    echo "All logs: $root"
+    echo 'vllm.log / omni.log: engine and automatic-router output'
+    echo 'install.log / update.log: complete installer/updater output'
+    echo 'install-packages-*.log / update-packages-*.log: package resolver output'
+    echo 'manager-events.log: command names, backend and exit status (no arguments)'
+    echo 'service-*.log: systemd output saved by logs --service'
+    echo 'Timestamped files are earlier sessions; pip-install-*.log are legacy package logs.'
+    if [ -d "$root" ]; then find "$root" -maxdepth 1 -type f -name '*.log*' -printf '%f\n' | sort; fi
+    echo 'View: localvllm logs --file NAME --no-follow; live output: omit --no-follow (Ctrl+C stops).'
     return
   fi
-
-  if has_user_service; then
-    journalctl --user -u "$SERVICE_UNIT" -f
+  selector="${selector:-$LOCALVLLM_BACKEND}"
+  if [ "$service" = 1 ]; then
+    [ "$selector" != all ] || fail 'choose vllm or omni for --service'
+    [ -z "$file" ] || fail 'use --service or --file, not both'
+    localvllm_use_backend "$selector" || return 1
+    command -v journalctl >/dev/null || fail 'journalctl is unavailable on this system'
+    mkdir -p "$root"
+    file="$root/service-$selector.log"
+    localvllm_rotate_log "$file" || return 1
+    (umask 077; touch "$file") || return 1
+    chmod 600 "$file"
+    journal_args=(--user -u "$SERVICE_UNIT" -n "$lines" --no-pager)
+    [ "$follow" = 0 ] || journal_args+=(-f)
+    journalctl "${journal_args[@]}" | tee "$file"
     return
   fi
-
-  mkdir -p "$(dirname "$LOG_FILE")"
-  touch "$LOG_FILE"
-  tail -f "$LOG_FILE"
+  if [ -n "$file" ]; then
+    [[ "$file" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.log([.][A-Za-z0-9._-]+)?$ ]] || fail 'use a filename from logs --list, without a directory'
+    files=("$root/$file")
+  elif [ "$selector" = all ]; then
+    if [ -d "$root" ]; then mapfile -t files < <(find "$root" -maxdepth 1 -type f -name '*.log' -print | sort); fi
+  else
+    localvllm_use_backend "$selector" || return 1
+    files=("$LOG_FILE")
+  fi
+  if [ "${#files[@]}" = 0 ]; then echo "No logs yet. Directory: $root"; return; fi
+  for file in "${files[@]}"; do
+    [ -f "$file" ] || { echo "Log not created yet: $file"; echo 'Use localvllm logs --list or logs --service to inspect startup failures.'; return 1; }
+  done
+  echo "Logs: $root"
+  if [ "$follow" = 1 ]; then tail -n "$lines" -F -- "${files[@]}"; else tail -n "$lines" -- "${files[@]}"; fi
 }

@@ -18,9 +18,9 @@ Commands:
                          Show service, process, model, and API status
   check [--chat] [BACKEND|all]
                          Check /health and /v1/models
-  logs [BACKEND]         Follow one service's current log (rotated on start)
+  logs [BACKEND|all]     Follow logs; --list lists files; --no-follow prints recent lines
   metrics [--watch] [BACKEND]
-                         Show vLLM Prometheus metrics (queue, KV cache, speed)
+                         Readable queue/cache/token statistics; --raw for Prometheus
   models [--json|--paths] List models, storage folders, and live/selected state
   use MODEL              Select the model for that backend
   load [MODEL]           Start/wake the service, optionally switching MODEL
@@ -40,16 +40,105 @@ Commands:
   add /path/to/model     Register an existing folder without copying it
   remove MODEL           Remove a stopped backend model registration; preserve weights
   mode [direct|swap]     Show/change this backend's serving mode
-  help                   Show this help
+  help [TOPIC]           Help: models, modes, keys, logs, metrics, troubleshoot
 
-Examples:
-  localvllm --backend omni models
-  localvllm use Qwen/Qwen3-8B
-  localvllm --backend omni use Qwen/Qwen3-Omni-30B-A3B-Instruct
-  localvllm backend install omni
-  localvllm start all
-  localvllm status all
+Common workflows:
+  localvllm models                         # Your models and storage
+  localvllm pull ORG/MODEL                 # Download without interrupting serving
+  localvllm use ORG/MODEL                  # Select a direct-mode model
+  localvllm start                          # Start this backend
+  localvllm --backend omni models          # Same commands for Omni
+  localvllm menu                           # Optional interactive interface
+
+Need help? localvllm help models | modes | keys | logs | metrics | troubleshoot
+Full guide: https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md
 EOF
+}
+
+help_topic() {
+  local topic="${1:-}"
+  [ "$#" -le 1 ] || fail 'usage: localvllm help [TOPIC]'
+  case "$topic" in
+    '') usage ;;
+    models)
+      cat <<EOF
+Models — use --backend omni for the separate Omni library.
+  localvllm models --paths          Show your model library and shared cache
+  localvllm pull ORG/MODEL          Download/register; cached files are reused
+  localvllm add /path/to/model      Register a complete model folder, without copying
+  localvllm use MODEL               Select a registered model or folder for direct mode
+  localvllm start                   Start the selected backend
+  localvllm reload                  Apply registrations to automatic routing when ready
+  localvllm remove MODEL            Remove registration while stopped; preserve weights
+Own files: put a complete model folder under ~/ai-vllm/models/vllm/ or models/omni/.
+Use models --paths for your actual installation paths. Model memory requirements vary.
+EOF
+      ;;
+    modes)
+      cat <<EOF
+Direct/manual (default): clients connect to the engine. Select with use MODEL.
+Automatic (llama-swap): clients send the model ID in each API request.
+  localvllm mode                   Show current mode
+  localvllm mode direct            Use native serving
+  localvllm mode swap              Enable automatic switching and download the router
+  localvllm ui --open              Open API docs (direct) or model dashboard (swap)
+Both backends retain their own models, API keys, ports and mode.
+Changing modes or applying configuration may restart a running service.
+After pull/add, use reload to update a running router; active requests may be interrupted.
+EOF
+      ;;
+    keys|key) key_usage ;;
+    logs)
+      cat <<EOF
+Logs — one directory for both backends and manager operations.
+  localvllm logs                    Follow this backend (Ctrl+C exits)
+  localvllm logs omni               Follow Omni
+  localvllm logs all                Follow all current log files
+  localvllm logs --list             File names and what each contains
+  localvllm logs --path             Print the shared log directory
+  localvllm logs --no-follow -n 100  Print recent lines without waiting
+  localvllm logs --file update.log --no-follow
+  localvllm logs --service          Read systemd startup logs and save a local copy
+All logs live under <install directory>/logs, normally ~/ai-vllm/logs.
+Runtime logs include native engine output and llama-swap workers in automatic mode.
+Older runtime/operation sessions have timestamped filenames.
+Review logs before sharing: upstream errors and package tools may include private paths or URLs.
+EOF
+      ;;
+    metrics)
+      cat <<EOF
+Metrics — works in direct/manual and llama-swap modes for vLLM and Omni.
+  localvllm metrics                 Queue, cache, token counters and mean first-token latency
+  localvllm metrics --watch         Refresh every 2 seconds; sampled generation speed
+  localvllm metrics omni            Inspect the Omni backend
+  localvllm metrics --raw           Native Prometheus endpoint (router metrics in swap mode)
+No inference request is sent and no model is loaded by monitoring.
+In automatic mode, ready worker metrics are read directly over loopback.
+Missing or model-specific metrics appear as n/a; counter resets are not negative speed.
+Omni stage-specific image/audio/video metrics vary by model and engine version.
+GPU memory is hardware-wide, not a per-model allocation. Ctrl+C stops live monitoring.
+EOF
+      ;;
+    troubleshoot)
+      cat <<EOF
+Troubleshooting — commands work with --backend omni too.
+  localvllm status                  Service and process state
+  localvllm doctor all              Check both installations and dependencies
+  localvllm check                   Health and available API models
+  localvllm check --chat            Send a small chat request (may load a model)
+  localvllm logs --no-follow        Recent engine/router errors
+  localvllm logs --service --no-follow  Startup and systemd errors
+  localvllm update --scripts-only   Refresh manager helpers
+  localvllm update                  Update this backend, router and helpers
+  localvllm update --all            Update every installed backend
+No model? Use models, pull ORG/MODEL, then use MODEL and start.
+Memory error? Choose a smaller model/context or review help models and suggest MODEL.
+For ARM64, ROCm and Fedora/RHEL, consult the platform guide before selecting wheels:
+https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#platform-notes
+EOF
+      ;;
+    *) echo "Unknown help topic: $topic. Choose models, modes, keys, logs, or troubleshoot." >&2; return 2 ;;
+  esac
 }
 
 fail() {

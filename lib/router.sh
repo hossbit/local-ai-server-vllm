@@ -87,7 +87,7 @@ localvllm_router_generate() (
     echo 'Create an API key before enabling automatic switching.' >&2; return 1
   fi
   jq -n --arg key "$key" --argjson timeout "${LOCALVLLM_HEALTH_CHECK_TIMEOUT:-900}" \
-    '{healthCheckTimeout:$timeout,unloadTimeout:60,captureBuffer:0,models:{}} + (if $key == "" then {} else {apiKeys:[$key]} end)' > "$config"
+    '{healthCheckTimeout:$timeout,unloadTimeout:60,captureBuffer:0,logToStdout:"proxy,upstream,http",logTimeFormat:"rfc3339",models:{}} + (if $key == "" then {} else {apiKeys:[$key]} end)' > "$config"
   while IFS=$'\t' read -r id source model format path; do
     [ -n "$id" ] || continue
     "$rebuild" --backend "$LOCALVLLM_BACKEND" --model "$id" --worker "$work/worker.sh" "$work/worker.env" >/dev/null
