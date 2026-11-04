@@ -27,7 +27,7 @@ Commands:
   unload                 Sleep the model when sleep mode is enabled, else stop
   ui                     Print vLLM API docs and OpenAI endpoint URLs
   suggest [MODEL]        Suggest settings from model size and hardware
-  key ...                Manage that backend's single active API key
+  key ...                Manage API keys (create, list, revoke, rotate)
   backend ...            List/install backends, or set the default
   doctor [--json] [BACKEND|all]
                          Check Python, vLLM, GPU, models, ports, keys, pip

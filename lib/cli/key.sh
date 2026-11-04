@@ -11,6 +11,8 @@ Commands:
   rotate KEY_ID   Create a replacement for KEY_ID, then revoke it
   help            Show this help
 
+Keys work in direct/manual and llama-swap modes for both vLLM and Omni.
+Changing a key regenerates the selected backend's launcher and may restart it.
 vLLM supports one active API key per server. 'create' refuses to add a
 second active key; use 'rotate' to replace the current one, or revoke it
 first. A key's full secret is printed once and cannot be recovered.
@@ -61,6 +63,33 @@ key_activate() {
   fi
 
   apply_config_change
+}
+
+# Commit the registry only if its launcher configuration can be activated.
+key_apply_registry() {
+  local registry="$1" content="$2" backup existed=0
+  backup="$(mktemp "$CONF_DIR/.key-rollback.XXXXXX")" || return 1
+  chmod 600 "$backup"
+  if [ -f "$registry" ]; then
+    existed=1
+    cp -p "$registry" "$backup" || { rm -f "$backup"; return 1; }
+  fi
+  if ! api_key_registry_write_atomic "$registry" "$content"; then
+    rm -f "$backup"
+    echo 'Error: failed to save key registry.' >&2
+    return 1
+  fi
+  echo 'Applying key configuration (a running backend may restart)...'
+  if ! key_activate; then
+    if [ "$existed" = 1 ]; then
+      mv -f "$backup" "$registry" || { echo "Error: key rollback failed; backup: $backup" >&2; return 1; }
+    else
+      rm -f "$registry" "$backup"
+    fi
+    echo 'Error: key change was not applied; previous key registry restored.' >&2
+    return 1
+  fi
+  rm -f "$backup"
 }
 
 key_print_new_secret() {
@@ -127,10 +156,7 @@ key_create_cmd() {
   fi
 
   content="$(api_key_registry_content_from_rows "$rows")"
-  api_key_registry_write_atomic "$registry" "$content" || fail "failed to save key registry"
-
-  echo "Applying configuration..."
-  key_activate || echo "Warning: key was saved, but activation failed; run 'localvllm reload' to retry." >&2
+  key_apply_registry "$registry" "$content" || return 1
 
   key_print_new_secret "$name" "$id" "$created" "$secret"
 }
@@ -233,10 +259,7 @@ key_revoke_cmd() {
 
   local content
   content="$(api_key_registry_content_from_rows "$rows")"
-  api_key_registry_write_atomic "$registry" "$content" || fail "failed to save key registry"
-
-  echo "Applying configuration..."
-  key_activate || echo "Warning: key was revoked, but activation failed; run 'localvllm reload' to retry." >&2
+  key_apply_registry "$registry" "$content" || return 1
 
   echo "$(c 31 "Revoked:") $target ($revoked_name)"
 }
@@ -286,10 +309,7 @@ key_rotate_cmd() {
   rows="$rows$(printf '%s\t%s\t%s\tactive\t%s' "$new_id" "$old_name" "$new_created" "$new_secret")"
 
   content="$(api_key_registry_content_from_rows "$rows")"
-  api_key_registry_write_atomic "$registry" "$content" || fail "failed to save key registry"
-
-  echo "Applying configuration..."
-  key_activate || echo "Warning: key was rotated, but activation failed; run 'localvllm reload' to retry." >&2
+  key_apply_registry "$registry" "$content" || return 1
 
   echo "$(c 2 "Revoked previous key:") $target"
   key_print_new_secret "$old_name" "$new_id" "$new_created" "$new_secret"
