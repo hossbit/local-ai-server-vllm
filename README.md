@@ -246,6 +246,20 @@ without loading them; `--raw` retains the native Prometheus output.
 
 [Installer hub](https://hossbit.github.io/#localvllm) · [Report an issue](https://github.com/hossbit/local-ai-server-vllm/issues)
 
+## Support
+
+These installers are built and tested on a home lab. One-time donations go
+toward the hardware, storage, and power it takes to keep testing new models and
+releases.
+
+<div align="center">
+  <a href="https://donate.stripe.com/bJebJ0fzHeNc5F32fhaMU00">
+    <img src="https://hossbit.github.io/assets/donation-progress.svg" alt="Donation goal progress for the home lab upgrade" width="520">
+  </a>
+  <br>
+  <strong><a href="https://donate.stripe.com/bJebJ0fzHeNc5F32fhaMU00">Donate via Stripe</a></strong>
+</div>
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
