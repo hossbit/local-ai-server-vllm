@@ -332,7 +332,7 @@ use_cmd() {
     existing_override="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id" 2>/dev/null || true)"
     if [ -n "$existing_override" ]; then
       meta="$(localvllm_override_meta "$existing_override")" || true
-      IFS=$'\t' read -r existing_id existing_model existing_format <<<"$meta"
+      IFS=$'\037' read -r existing_id existing_model existing_format <<<"$meta"
       [ -n "$existing_id" ] || existing_id="$id"
       if [ "$existing_model" != "$spec" ]; then
         fail "model id '$id' already exists with a different MODEL in $existing_override; edit or remove that file first"

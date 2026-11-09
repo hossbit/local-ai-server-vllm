@@ -25,16 +25,16 @@ archive_url() {
 
 usage() {
   cat <<EOF
-Usage: curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | bash
+Usage: curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash
 
 Custom install directory:
-  curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | LOCALVLLM_DIR="\$HOME/ai-vllm" bash
+  curl -fsSL https://hossbit.github.io/localvllm/install.sh | LOCALVLLM_DIR="\$HOME/ai-vllm" bash
 
 Install both isolated backends:
-  curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | bash -s -- --all
+  curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash -s -- --all
 
 Install only vLLM-Omni:
-  curl -fsSL https://raw.githubusercontent.com/hossbit/local-ai-server-vllm/main/install.sh | bash -s -- --backend omni
+  curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash -s -- --backend omni
 
 Environment:
   LOCALVLLM_DIR         Install directory. Default: ~/ai-vllm

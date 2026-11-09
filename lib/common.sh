@@ -321,12 +321,23 @@ localvllm_use_backend() {
   return 0
 }
 
+localvllm_url_host() {
+  local host="${1:-}"
+
+  # RFC 3986 requires brackets around IPv6 literals in URLs.
+  case "$host" in
+    \[*\]) printf '%s' "$host" ;;
+    *:*) printf '[%s]' "$host" ;;
+    *) printf '%s' "$host" ;;
+  esac
+}
+
 api_base_url_for_port_file() {
   local port_file="$1"
   local port
 
   port="$([ -f "$port_file" ] && cat "$port_file" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
-  printf 'http://%s:%s' "$LOCALVLLM_LISTEN_HOST" "$port"
+  printf 'http://%s:%s' "$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST")" "$port"
 }
 
 port_is_listening() {
@@ -596,11 +607,26 @@ localvllm_has_user_service() {
 }
 
 localvllm_service_is_active() {
+  local unit="${SERVICE_UNIT:-${LOCALVLLM_SERVICE_NAME%.service}}"
+
+  # The generated unit is Type=simple, so systemd tracks the vLLM process
+  # itself and a crash makes is-active false. Keep the PID-file check as a
+  # fallback for users who run the helper scripts directly.
   if localvllm_has_user_service &&
-    systemctl --user is-active --quiet "${LOCALVLLM_SERVICE_NAME%.service}" 2>/dev/null; then
+    systemctl --user is-active --quiet "$unit" 2>/dev/null; then
     return 0
   fi
   pid_file_matches_process "$PID_FILE" "$PID_START_FILE"
+}
+
+localvllm_service_main_pid() {
+  local unit="${SERVICE_UNIT:-${LOCALVLLM_SERVICE_NAME%.service}}"
+  local pid
+
+  command -v systemctl >/dev/null 2>&1 || return 1
+  pid="$(systemctl --user show -p MainPID --value "$unit" 2>/dev/null)" || return 1
+  [[ "$pid" =~ ^[0-9]+$ ]] && [ "$pid" -gt 0 ] || return 1
+  printf '%s\n' "$pid"
 }
 
 localvllm_stop_service() {
@@ -613,9 +639,36 @@ localvllm_stop_service() {
   fi
 }
 
+# systemd returns from `start` as soon as the Type=simple process is running,
+# before the model has loaded. Wait for the API so that a failed load is
+# reported to the caller instead of being mistaken for success.
+localvllm_wait_ready() {
+  local base deadline
+
+  [ "${LOCALVLLM_READY_WAIT:-1}" = "1" ] || return 0
+  command -v curl >/dev/null 2>&1 || return 0
+  base="$(api_base_url_for_port_file "$PORT_FILE")"
+  deadline=$((SECONDS + ${LOCALVLLM_HEALTH_CHECK_TIMEOUT:-900}))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    localvllm_service_is_active || return 1
+    api_auth_curl_args
+    if curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "$base/health" >/dev/null 2>&1 ||
+      curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "$base/v1/models" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
 localvllm_start_service() {
   if localvllm_has_user_service; then
-    systemctl --user start "$LOCALVLLM_SERVICE_NAME"
+    systemctl --user start "$LOCALVLLM_SERVICE_NAME" || return 1
+    if ! localvllm_wait_ready; then
+      echo "Error: $LOCALVLLM_SERVICE_NAME started but its API did not become ready." >&2
+      echo "Details: journalctl --user -u $LOCALVLLM_SERVICE_NAME -n 30 --no-pager" >&2
+      return 1
+    fi
   elif [ -x "${BIN_DIR:-}/start.sh" ]; then
     "$BIN_DIR/start.sh" "$LOCALVLLM_BACKEND"
   else
@@ -811,15 +864,37 @@ localvllm_link_cached_model() {
 
 localvllm_model_size_bytes() {
   local spec="$1"
+  local extension file found=""
 
-  if [ -d "$spec" ]; then
-    # -L follows Hugging Face cache snapshot symlinks back to their blobs.
-    du -sbL "$spec" 2>/dev/null | awk '{print $1; exit}'
-  elif [ -f "$spec" ]; then
-    stat -c '%s' "$spec" 2>/dev/null || printf '0\n'
-  else
-    printf '0\n'
+  if [ -f "$spec" ]; then
+    stat -Lc '%s' "$spec" 2>/dev/null || printf '0\n'
+    return 0
   fi
+  [ -d "$spec" ] || { printf '0\n'; return 0; }
+
+  # Count one weight format, not every artifact in the folder. Repositories
+  # often ship both .safetensors and .bin files, or consolidated copies, and
+  # summing them all would double- or triple-count the same weights.
+  for extension in safetensors gguf bin pt pth ckpt onnx h5; do
+    if find -L "$spec" -type f -name "*.$extension" -print -quit 2>/dev/null | grep -q .; then
+      found="$extension"
+      break
+    fi
+  done
+
+  if [ -n "$found" ]; then
+    # Deduplicate by device/inode so hard links and cache-snapshot links to the
+    # same blob are counted once. -L follows Hugging Face snapshot symlinks.
+    find -L "$spec" -type f -name "*.$found" -print0 2>/dev/null |
+      while IFS= read -r -d '' file; do
+        stat -Lc '%d:%i %s' -- "$file" 2>/dev/null || true
+      done |
+      awk '!seen[$1]++ { total += $2 } END { printf "%.0f\n", total }'
+    return 0
+  fi
+
+  # Unknown layout: retain the old behavior rather than report a zero size.
+  du -sbL "$spec" 2>/dev/null | awk '{print $1; exit}'
 }
 
 localvllm_safe_id() {
@@ -830,9 +905,12 @@ localvllm_safe_id() {
   printf '%s\n' "$id"
 }
 
-# localvllm_override_meta FILE: prints "ID<TAB>MODEL<TAB>FORMAT" for a
-# models.d file. The file is sourced in a throwaway subshell so one malformed
-# model override cannot poison discovery of every other model.
+# localvllm_override_meta FILE: prints "ID<US>MODEL<US>FORMAT" for a models.d
+# file. ASCII unit separator is used instead of a tab because Bash treats tab
+# as IFS whitespace and collapses an empty leading field, which used to shift
+# MODEL into ID when a file set MODEL but omitted ID. The file is sourced in a
+# throwaway subshell so one malformed model override cannot poison discovery of
+# every other model.
 localvllm_override_meta() {
   local file="$1"
 
@@ -841,7 +919,7 @@ localvllm_override_meta() {
     unset ID MODEL FORMAT MODEL_TYPE
     # shellcheck disable=SC1090
     . "$file" >/dev/null 2>&1 || exit 0
-    printf '%s\t%s\t%s\n' "${ID:-}" "${MODEL:-}" "${FORMAT:-}"
+    printf '%s\037%s\037%s\n' "${ID:-}" "${MODEL:-}" "${FORMAT:-}"
   )
 }
 
@@ -854,7 +932,7 @@ localvllm_override_file_for_id() {
 
   while IFS= read -r file; do
     meta="$(localvllm_override_meta "$file")" || continue
-    IFS=$'\t' read -r id _ _ <<<"$meta"
+    IFS=$'\037' read -r id _ _ <<<"$meta"
     [ -n "$id" ] || id="$(basename "$file" .conf)"
     if [ "$id" = "$wanted" ]; then
       printf '%s\n' "$file"
@@ -963,7 +1041,7 @@ localvllm_model_entries() {
     local file meta id model format gguf_file
     while IFS= read -r file; do
       meta="$(localvllm_override_meta "$file")" || continue
-      IFS=$'\t' read -r id model format <<<"$meta"
+      IFS=$'\037' read -r id model format <<<"$meta"
       [ -n "$id" ] || id="$(basename "$file" .conf)"
 
       # A models.d file may contain only tuning (no MODEL). If it names an
@@ -1348,15 +1426,23 @@ api_key_active_count() {
 }
 
 AUTH_CURL_ARGS=()
+AUTH_CURL_FD=""
 api_auth_curl_args() {
   local registry secret
 
   AUTH_CURL_ARGS=()
+  if [ -n "${AUTH_CURL_FD:-}" ]; then
+    exec {AUTH_CURL_FD}<&-
+    AUTH_CURL_FD=""
+  fi
   registry="$(api_key_registry_path)"
   [ -f "$registry" ] || return 0
   secret="$(api_key_active_secrets "$registry" | head -n1)"
   [ -n "$secret" ] || return 0
-  AUTH_CURL_ARGS=(-H "Authorization: Bearer $secret")
+  # Keep the bearer token out of curl's argv, where other local users could
+  # read it from ps. A private file descriptor is passed instead.
+  exec {AUTH_CURL_FD}< <(printf 'header = "Authorization: Bearer %s"\n' "$secret")
+  AUTH_CURL_ARGS=(--config "/dev/fd/$AUTH_CURL_FD")
 }
 
 api_key_registry_write_atomic() {

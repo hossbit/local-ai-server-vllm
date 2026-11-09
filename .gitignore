@@ -16,4 +16,3 @@ __pycache__/
 
 # Local development resources (kept on disk, excluded from GitHub).
 /.claude/skills/localvllm-dual-backend/
-/tests/

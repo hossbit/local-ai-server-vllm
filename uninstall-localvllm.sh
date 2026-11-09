@@ -161,14 +161,6 @@ if [ "${#REMOVE_BACKENDS[@]}" -eq "$(localvllm_backend_list | grep -c .)" ]; the
   REMOVE_ALL=1
 fi
 
-has_systemctl_user() {
-  command -v systemctl >/dev/null 2>&1
-}
-
-has_user_service() {
-  has_systemctl_user && systemctl --user cat "$LOCALVLLM_SERVICE_NAME" >/dev/null 2>&1
-}
-
 confirm() {
   [ "$FORCE" -eq 1 ] && return 0
   printf '%s [y/N] ' "$1"
@@ -253,7 +245,7 @@ fi
 for BACKEND in "${REMOVE_BACKENDS[@]}"; do
   localvllm_use_backend "$BACKEND" || continue
 
-  if has_user_service; then
+  if localvllm_has_user_service; then
     log "Stopping and disabling $LOCALVLLM_SERVICE_NAME"
     systemctl --user stop "$LOCALVLLM_SERVICE_NAME" || warn "could not stop $LOCALVLLM_SERVICE_NAME"
     systemctl --user disable "$LOCALVLLM_SERVICE_NAME" || warn "could not disable $LOCALVLLM_SERVICE_NAME"
@@ -273,7 +265,7 @@ if [ "$REMOVE_ALL" -eq 1 ] && [ "$KEEP_VENV" -eq 0 ]; then
   remove_if_exists "$VENV_ROOT/.localvllm-tools"
 fi
 
-if has_systemctl_user; then
+if command -v systemctl >/dev/null 2>&1; then
   systemctl --user daemon-reload || warn "could not reload the systemd user manager"
   for BACKEND in "${REMOVE_BACKENDS[@]}"; do
     localvllm_use_backend "$BACKEND" || continue

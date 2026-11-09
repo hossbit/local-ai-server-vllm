@@ -4,15 +4,19 @@
 config_assignment_value() {
   local key="$1"
   local file="$2"
+  local value
 
   [ -f "$file" ] || return 1
-  awk -F= -v key="$key" '
-    $1 == key {
-      value = substr($0, index($0, "=") + 1)
-      gsub(/^[[:space:]"'\'']+|[[:space:]"'\'']+$/, "", value)
-      print value
-    }
-  ' "$file" | tail -n 1
+  # Configuration files are Bash fragments written by this manager, so source
+  # them in a private subshell instead of re-implementing shell quoting. This
+  # preserves spaces and %q escapes in paths.
+  value="$(
+    set +u
+    # shellcheck disable=SC1090
+    . "$file" >/dev/null 2>&1 || exit 1
+    eval "printf '%s' \"\${$key-}\""
+  )" || return 1
+  printf '%s' "$value"
 }
 
 # Preserve user-tuned runtime settings when the packaged config is refreshed.
@@ -47,6 +51,8 @@ append_runtime_tuning() {
     LOCALVLLM_MODELS_OVERRIDE_SUBDIR
     LOCALVLLM_SERVICE_NAME
     LOCALVLLM_CLI_NAME
+    LOCALVLLM_UV_VERSION
+    LOCALVLLM_UV_INSTALL_SHA256
     VLLM_VERSION
     VLLM_PIP_ARGS
     VLLM_TARGET_DEVICE
@@ -206,11 +212,11 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
+Type=simple
 Environment=LOCALVLLM_SYSTEMD_UNIT=1
 ExecStart=$bin_dir/start.sh $backend
-ExecStop=$bin_dir/stop.sh $backend
+Restart=on-failure
+RestartSec=5
 TimeoutStartSec=1800
 TimeoutStopSec=180
 
@@ -240,7 +246,7 @@ write_backend_profile() {
 # conf/backends/vllm/models.d. vLLM-Omni models belong in the omni backend.
 
 VLLM_OMNI=0
-VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN-8192}"
 EOF
       ;;
     omni)
@@ -250,12 +256,12 @@ EOF
 # conf/backends/omni/models.d. Keep VLLM_VERSION and VLLM_OMNI_VERSION on the
 # same release line when pinning (for example both 0.32.0).
 #
-# vLLM-Omni is served by the same command with --omni. Leave VLLM_MAX_MODEL_LEN
-# empty to let each omni model's own deployment config decide, or set a value
-# here to cap it for every omni model.
+# vLLM-Omni is served by the same command with --omni. Set
+# VLLM_MAX_MODEL_LEN= (an explicitly empty value) to let each omni model's own
+# deployment config decide, or set a value here to cap it for every omni model.
 
 VLLM_OMNI=1
-VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-8192}"
+VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN-8192}"
 VLLM_TENSOR_PARALLEL_SIZE="${VLLM_TENSOR_PARALLEL_SIZE:-1}"
 VLLM_GPU_MEMORY_UTILIZATION="${VLLM_GPU_MEMORY_UTILIZATION:-0.90}"
 EOF
@@ -392,7 +398,7 @@ localvllm_python_can_create_venv() {
 }
 
 localvllm_find_compatible_python() {
-  local candidate uv_bin installer python_path backend="${1:-omni}"
+  local candidate uv_bin installer uv_version uv_sha256 python_path backend="${1:-omni}"
   # Honor a deliberately configured interpreter. Plain vLLM may support a
   # newer Python than Omni; let pip validate a specific plain vLLM version.
   if [ "${LOCALVLLM_PYTHON:-python3}" != python3 ]; then
@@ -423,8 +429,19 @@ localvllm_find_compatible_python() {
       echo "Python 3.11–3.13 was not found. Downloading uv and an isolated Python 3.12..." >&2
       mkdir -p "$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools" || return 1
       installer="$(mktemp)" || return 1
-      if ! curl -fsSL https://astral.sh/uv/install.sh -o "$installer" ||
-        ! UV_UNMANAGED_INSTALL="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools" sh "$installer" >&2; then
+      uv_version="${LOCALVLLM_UV_VERSION:-0.13.7}"
+      uv_sha256="${LOCALVLLM_UV_INSTALL_SHA256:-d263ee68314cf5bea36b08e6bd9e2c4563240d7adb73756cf33af5c199b92db4}"
+      if ! curl -fsSL "https://astral.sh/uv/${uv_version}/install.sh" -o "$installer"; then
+        rm -f "$installer"
+        echo "Error: could not download the pinned uv installer. Install Python 3.12 and retry." >&2
+        return 1
+      fi
+      if [ "$(sha256sum "$installer" | awk '{print $1}')" != "$uv_sha256" ]; then
+        rm -f "$installer"
+        echo "Error: uv installer checksum verification failed; refusing to execute it." >&2
+        return 1
+      fi
+      if ! UV_UNMANAGED_INSTALL="$AI_DIR/${LOCALVLLM_VENV_SUBDIR:-venv}/.localvllm-tools" sh "$installer" >&2; then
         rm -f "$installer"
         echo "Error: could not install uv. Install Python 3.12 and retry." >&2
         return 1
@@ -458,9 +475,33 @@ vllm_venv_create() {
   }
 }
 
+vllm_venv_update_space_required() {
+  local venv="$1"
+  local size="" available="" required
+
+  # The staged copy keeps the old environment until the service starts, so an
+  # update can need roughly twice the venv size. Reflinks reduce this, but the
+  # check errs on the side of refusing a likely out-of-space update.
+  [ -d "$venv" ] || return 0
+  size="$(du -sb "$venv" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+  [[ "$size" =~ ^[0-9]+$ ]] && [ "$size" -gt 0 ] || return 0
+
+  required=$((size * 2))
+  available="$(df -PB1 "$(dirname "$venv")" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  if [[ "$available" =~ ^[0-9]+$ ]] && [ "$available" -lt "$required" ]; then
+    echo "Error: not enough free disk space to update $venv." >&2
+    echo "The staged update needs about $(format_bytes_human "$required") free; $(format_bytes_human "$available") is available." >&2
+    echo "Free space, choose another install location, or run 'localvllm update --scripts-only'." >&2
+    return 1
+  fi
+  return 0
+}
+
 vllm_venv_stage_update() {
   local venv="$1"
   local stage="$venv.update.$$"
+
+  vllm_venv_update_space_required "$venv" || return 1
 
   rm -rf "$stage"
   if ! cp -a --reflink=auto "$venv" "$stage" 2>/dev/null; then

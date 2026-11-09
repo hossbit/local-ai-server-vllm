@@ -244,7 +244,7 @@ version_one() {
   fi
 
   port="$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
-  echo "Endpoint: http://${LOCALVLLM_LISTEN_HOST}:${port}/v1"
+  echo "Endpoint: http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):${port}/v1"
   if service_is_active; then
     echo "Service: running"
   elif has_user_service; then

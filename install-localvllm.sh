@@ -362,6 +362,9 @@ install_backend() {
 
   select_port "$name"
   write_systemd_user_service "$SERVICE_FILE" "$BIN_DIR" "$name"
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+  fi
 
   if [ "$was_running" -eq 1 ]; then
     if ! localvllm_start_service; then

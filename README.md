@@ -209,6 +209,7 @@ localvllm start                 # Start the server
 localvllm stop                  # Stop the server
 localvllm ui --open             # Open API docs or the model dashboard
 localvllm doctor all            # Diagnose both backends
+localvllm config check          # Validate configuration without changing anything
 localvllm backend install omni  # Add vLLM-Omni later
 ```
 
@@ -218,6 +219,10 @@ Put your own complete model folder in `~/ai-vllm/models/vllm/` (or `models/omni/
 Run `localvllm models --paths` to see storage locations, then select a folder
 with `localvllm use FOLDER_NAME`. Existing folders elsewhere also work with
 `localvllm use /path/to/model`. [Model storage guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models).
+
+Per-model tuning files in `conf/backends/<backend>/models.d/` are sourced as
+Bash. They can set shell variables and arrays such as `EXTRA_ARGS`, so only
+install or edit files you trust and keep them owned by your user.
 
 For GGUF models, consider [Local AI Server](https://github.com/hossbit/local-ai-server),
 which uses llama.cpp. [GGUF details](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#gguf-models).

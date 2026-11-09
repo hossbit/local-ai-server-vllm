@@ -31,6 +31,8 @@ Commands:
   backend ...            List/install backends, or set the default
   doctor [--json] [BACKEND|all]
                          Check Python, vLLM, GPU, models, ports, keys, pip
+  config check [BACKEND|all]
+                         Validate configuration without changing the launcher
   update [--all]         Update selected backend, router and helpers; --all updates every backend
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
@@ -143,6 +145,7 @@ EOF
 Troubleshooting — commands work with --backend omni too.
   localvllm status                  Service and process state
   localvllm doctor all              Check both installations and dependencies
+  localvllm config check            Validate configuration without changing it
   localvllm check                   Health and available API models
   localvllm check --chat            Send a small chat request (may load a model)
   localvllm logs --no-follow        Recent engine/router errors
@@ -175,16 +178,14 @@ fail() {
   exit 1
 }
 
+# CLI compatibility wrappers. The single implementation lives in
+# lib/common.sh and is shared with the installer, updater and uninstaller.
 has_user_service() {
-  command -v systemctl >/dev/null 2>&1 &&
-    systemctl --user cat "$LOCALVLLM_SERVICE_NAME" >/dev/null 2>&1
+  localvllm_has_user_service
 }
 
 service_is_active() {
-  if has_user_service && systemctl --user is-active --quiet "$SERVICE_UNIT" 2>/dev/null; then
-    return 0
-  fi
-  pid_file_matches_process "$PID_FILE" "$PID_START_FILE"
+  localvllm_service_is_active
 }
 
 # localvllm_resolve_selector [BACKEND|all]
@@ -246,7 +247,7 @@ print_service_details() {
   else
     echo "  selected model: ${active_id:-none}${active_model:+ ($active_model)}"
   fi
-  echo "  API: http://${LOCALVLLM_LISTEN_HOST}:$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
+  echo "  API: http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
   echo "  log: $LOG_FILE"
 }
 
@@ -254,22 +255,28 @@ pid_status() {
   local pid command port
 
   port="$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
-  if [ -f "$PID_FILE" ]; then
+  if [ -f "$PID_FILE" ] && pid_file_matches_process "$PID_FILE" "$PID_START_FILE"; then
     pid="$(<"$PID_FILE")"
-    if pid_file_matches_process "$PID_FILE" "$PID_START_FILE"; then
-      command="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
-      if process_is_vllm "$pid"; then
-        echo "Local $LOCALVLLM_BACKEND_LABEL process: running (vLLM PID $pid)"
-      else
-        echo "Local $LOCALVLLM_BACKEND_LABEL process: running (PID $pid, command ${command:-unknown})"
-      fi
+    command="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    if process_is_vllm "$pid"; then
+      echo "Local $LOCALVLLM_BACKEND_LABEL process: running (vLLM PID $pid)"
     else
-      echo "Local $LOCALVLLM_BACKEND_LABEL process: not running; stale PID file exists at $PID_FILE"
+      echo "Local $LOCALVLLM_BACKEND_LABEL process: running (PID $pid, command ${command:-unknown})"
+    fi
+  elif [ -f "$PID_FILE" ]; then
+    echo "Local $LOCALVLLM_BACKEND_LABEL process: not running; stale PID file exists at $PID_FILE"
+  elif has_user_service; then
+    if pid="$(localvllm_service_main_pid)"; then
+      echo "Local $LOCALVLLM_BACKEND_LABEL process: running (vLLM PID $pid via systemd)"
+    elif service_is_active; then
+      echo "Local $LOCALVLLM_BACKEND_LABEL process: managed by systemd (main PID pending)"
+    else
+      echo "Local $LOCALVLLM_BACKEND_LABEL process: not running (systemd service is not active; it may be restarting)"
     fi
   else
     echo "Local $LOCALVLLM_BACKEND_LABEL process: not running (no PID file)"
   fi
-  echo "API: http://${LOCALVLLM_LISTEN_HOST}:$port"
+  echo "API: http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):$port"
   if port_is_listening "$port"; then
     echo "Port: listening"
   else
@@ -306,6 +313,7 @@ doctor_bad() {
 }
 
 doctor_one_backend() {
+  local optional="${1:-0}"
   local python="$VENV_DIR/bin/python"
   local vllm="$VENV_DIR/bin/vllm"
   local version omni_version port free_space status
@@ -322,30 +330,34 @@ doctor_one_backend() {
 
   echo
   echo "Python and engine"
-  if [ -x "$python" ]; then
-    doctor_ok "Python: $(python_version "$python") ($python)"
+  if [ ! -x "$python" ] && [ "$optional" = "1" ]; then
+    doctor_warn "optional backend is not installed: $VENV_DIR (install with: localvllm backend install $LOCALVLLM_BACKEND)"
   else
-    doctor_bad "virtual environment is missing: $VENV_DIR (run install-localvllm.sh --backend $LOCALVLLM_BACKEND)"
-  fi
-  if [ -x "$vllm" ]; then
-    version="$(vllm_installed_version "$VENV_DIR")"
-    [ -n "$version" ] && doctor_ok "vLLM: $version" || doctor_warn "vLLM version could not be read"
-  else
-    doctor_bad "vLLM is not installed in $VENV_DIR"
-  fi
-  if [ "$LOCALVLLM_BACKEND" = "omni" ]; then
-    if vllm_omni_is_available "$VENV_DIR"; then
-      omni_version="$(vllm_omni_installed_version "$VENV_DIR")"
-      doctor_ok "vLLM-Omni: ${omni_version:-installed}"
+    if [ -x "$python" ]; then
+      doctor_ok "Python: $(python_version "$python") ($python)"
     else
-      doctor_bad "vLLM-Omni is not installed in $VENV_DIR"
+      doctor_bad "virtual environment is missing: $VENV_DIR (run install-localvllm.sh --backend $LOCALVLLM_BACKEND)"
     fi
-  fi
-  if [ -x "$VENV_DIR/bin/python" ]; then
-    if vllm_pip_check "$VENV_DIR"; then
-      doctor_ok "pip check: package set is consistent"
+    if [ -x "$vllm" ]; then
+      version="$(vllm_installed_version "$VENV_DIR")"
+      [ -n "$version" ] && doctor_ok "vLLM: $version" || doctor_warn "vLLM version could not be read"
     else
-      doctor_bad "pip check failed; run: $VENV_DIR/bin/python -m pip check"
+      doctor_bad "vLLM is not installed in $VENV_DIR"
+    fi
+    if [ "$LOCALVLLM_BACKEND" = "omni" ]; then
+      if vllm_omni_is_available "$VENV_DIR"; then
+        omni_version="$(vllm_omni_installed_version "$VENV_DIR")"
+        doctor_ok "vLLM-Omni: ${omni_version:-installed}"
+      else
+        doctor_bad "vLLM-Omni is not installed in $VENV_DIR"
+      fi
+    fi
+    if [ -x "$VENV_DIR/bin/python" ]; then
+      if vllm_pip_check "$VENV_DIR"; then
+        doctor_ok "pip check: package set is consistent"
+      else
+        doctor_bad "pip check failed; run: $VENV_DIR/bin/python -m pip check"
+      fi
     fi
   fi
 
@@ -381,7 +393,9 @@ doctor_one_backend() {
     doctor_warn "systemd user service is not installed"
   fi
   if service_is_active; then
-    doctor_ok "process is running (PID $(cat "$PID_FILE" 2>/dev/null || printf '?'))"
+    local running_pid
+    running_pid="$(localvllm_service_main_pid 2>/dev/null || cat "$PID_FILE" 2>/dev/null || printf '?')"
+    doctor_ok "process is running (PID $running_pid)"
   else
     doctor_warn "process is not running"
   fi
@@ -521,9 +535,21 @@ doctor_json_cmd() {
     doctor_json_one >> "$tmp"
   fi
 
-  errors="$(jq -s '[.[] | select(.installed == false)] | length' "$tmp")"
-  errors=$((errors + $(jq -s '[.[] | select(.installed == true and .pip_check == false)] | length' "$tmp")))
-  warnings="$(jq -s '[.[] | select(.service != "running")] | length' "$tmp")"
+  if [ "$selector" = "all" ]; then
+    # A backend that was never installed is optional in "doctor all". Only a
+    # backend that is present but broken counts as an error.
+    if [ "$(jq -s '[.[] | select(.installed == true)] | length' "$tmp")" -eq 0 ]; then
+      errors=1
+    else
+      errors=0
+    fi
+    errors=$((errors + $(jq -s '[.[] | select(.installed == true and .pip_check == false)] | length' "$tmp")))
+    warnings="$(jq -s '[.[] | select(.installed == false or .service != "running")] | length' "$tmp")"
+  else
+    errors="$(jq -s '[.[] | select(.installed == false)] | length' "$tmp")"
+    errors=$((errors + $(jq -s '[.[] | select(.installed == true and .pip_check == false)] | length' "$tmp")))
+    warnings="$(jq -s '[.[] | select(.service != "running")] | length' "$tmp")"
+  fi
   case "$LOCALVLLM_LISTEN_HOST" in
     127.0.0.1|localhost|::1) ;;
     *)
@@ -559,11 +585,11 @@ doctor_cmd() {
   if [ "$selector" = "all" ]; then
     while IFS= read -r name; do
       localvllm_use_backend "$name" || continue
-      doctor_one_backend || true
+      doctor_one_backend 1 || true
     done < <(localvllm_backend_list)
   else
     localvllm_use_backend "$selector" || return 1
-    doctor_one_backend || true
+    doctor_one_backend 0 || true
   fi
 
   localvllm_use_backend "$original_backend" >/dev/null 2>&1 || true
@@ -577,50 +603,67 @@ doctor_cmd() {
   return 0
 }
 
-# Interactive onboarding uses the existing installer and model/service paths.
-setup_cmd() {
-  local choice backend model answer
-  [ "$#" -eq 0 ] || fail "usage: localvllm setup"
-  [ -t 0 ] && [ -t 1 ] || fail "setup needs an interactive terminal; use 'localvllm backend install', 'localvllm use', and 'localvllm start' in scripts"
-  echo
-  echo "Welcome to Local AI Server"
-  echo "1) Text, embeddings and reranking (recommended)"
-  echo "2) Multimodal models (image, audio and video)"
-  printf 'Choose 1 or 2 [1]: '
-  read -r choice || return 1
-  case "${choice:-1}" in
-    1) backend=vllm ;;
-    2) backend=omni ;;
-    *) echo "Please run setup again and choose 1 or 2." >&2; return 2 ;;
+config_usage() {
+  cat <<EOF
+Usage: localvllm config check [BACKEND|all]
+
+Validates configuration by generating the launcher in a temporary directory.
+The installed launcher, service, and model state are not changed.
+Use --backend omni for the Omni backend.
+EOF
+}
+
+config_cmd() {
+  local sub="${1:-check}"
+  [ "$#" -eq 0 ] || shift
+
+  case "$sub" in
+    check) config_check_cmd "$@" ;;
+    help|-h|--help) config_usage ;;
+    *) config_usage >&2; return 2 ;;
   esac
-  localvllm_use_backend "$backend" || return 1
-  if ! localvllm_backend_installed "$backend"; then
-    echo
-    echo "The selected engine needs to be downloaded and installed. This can take time and disk space."
-    printf 'Install it now? [Y/n]: '
-    read -r answer || return 1
-    case "$answer" in ''|y|Y|yes|YES) ;; *) echo "Setup stopped. Run 'localvllm setup' when ready."; return 0 ;; esac
-    backend_install_cmd "$backend" || return 1
-    localvllm_use_backend "$backend" || return 1
+}
+
+config_check_cmd() {
+  local selector original_backend name status=0 output rebuild
+  [ "$#" -le 1 ] || fail 'usage: localvllm config check [BACKEND|all]'
+  selector="$(localvllm_resolve_selector "${1:-}")" || return 1
+  original_backend="$LOCALVLLM_BACKEND"
+
+  rebuild="${BIN_DIR:-}/rebuild-config.sh"
+  [ -x "$rebuild" ] || rebuild="${SCRIPT_DIR:-}/rebuild-config.sh"
+  [ -x "$rebuild" ] || fail "missing helper: ${BIN_DIR:-$SCRIPT_DIR}/rebuild-config.sh"
+
+  if [ "$selector" = "all" ]; then
+    while IFS= read -r name; do
+      echo
+      echo "== $name =="
+      localvllm_use_backend "$name" || { status=1; continue; }
+      if ! localvllm_backend_installed "$name" || ! localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR"; then
+        echo "Skipped: backend is not installed or has no registered models."
+        continue
+      fi
+      if output="$("$rebuild" --backend "$name" --dry-run 2>&1)"; then
+        printf '%s\n' "$output"
+        echo "Configuration is valid: $name"
+      else
+        printf '%s\n' "$output" >&2
+        echo "Configuration error: $name" >&2
+        status=1
+      fi
+    done < <(localvllm_backend_list)
+    localvllm_use_backend "$original_backend" >/dev/null 2>&1 || true
+    return "$status"
   fi
-  echo
-  echo "Enter a Hugging Face model ID (for example: Qwen/Qwen3-8B),"
-  echo "or a model name already listed by 'localvllm --backend $backend models'."
-  echo "Choose a model compatible with your hardware and selected engine."
-  printf 'Model (leave empty to finish later): '
-  read -r model || return 1
-  if [ -z "$model" ]; then
-    echo "Engine ready. Run 'localvllm setup' to choose a model later."
+
+  localvllm_use_backend "$selector" || return 1
+  echo "Checking configuration for $LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
+  if output="$("$rebuild" --backend "$LOCALVLLM_BACKEND" --dry-run 2>&1)"; then
+    printf '%s\n' "$output"
+    echo "Configuration is valid."
     return 0
   fi
-  use_cmd "$model" || return 1
-  printf 'Start the server now? [Y/n]: '
-  read -r answer || return 1
-  case "$answer" in
-    ''|y|Y|yes|YES)
-      service_cmd start "$backend" || return 1
-      echo "Run 'localvllm --backend $backend ui' for the API and documentation URLs."
-      ;;
-    *) echo "Start later with: localvllm start $backend" ;;
-  esac
+  printf '%s\n' "$output" >&2
+  echo "Configuration has errors. Fix them, then run 'localvllm reload'." >&2
+  return 1
 }

@@ -21,6 +21,12 @@ service_cmd_one() {
       echo "Server log: $LOG_FILE" >&2
       return 1
     fi
+    if [ "$action" != stop ] && ! localvllm_wait_ready; then
+      echo "Error: $LOCALVLLM_BACKEND_LABEL started, but its API did not become ready." >&2
+      echo "Details: journalctl --user -u $LOCALVLLM_SERVICE_NAME -n 30 --no-pager" >&2
+      echo "Server log: $LOG_FILE" >&2
+      return 1
+    fi
     echo "Local $LOCALVLLM_BACKEND_LABEL service $action completed."
     return 0
   fi
@@ -142,6 +148,9 @@ status_json_one() {
   fi
   port="$([ -f "$PORT_FILE" ] && cat "$PORT_FILE" || printf '%s' "$LOCALVLLM_DEFAULT_PORT")"
   pid="$(cat "$PID_FILE" 2>/dev/null || true)"
+  if [ -z "$pid" ]; then
+    pid="$(localvllm_service_main_pid 2>/dev/null || true)"
+  fi
   active_id="$(serve_env_value LOCALVLLM_ACTIVE_ID)"
   active_model="$(serve_env_value LOCALVLLM_MODEL)"
   if [ -z "$active_id" ] &&
@@ -198,7 +207,7 @@ status_cmd_one() {
     echo "Systemd service:"
     systemctl --user status "$SERVICE_UNIT" --no-pager || true
     echo
-    echo "Note: this service uses a helper script and may show active (exited); the process check below is authoritative."
+    echo "Note: this is a Type=simple service, so systemd reports the real vLLM process state."
   else
     print_service_details "helper script"
   fi

@@ -111,7 +111,7 @@ key_print_new_secret() {
   echo "    $(c 1 "$secret")"
   echo
   echo "Use it as a Bearer token:"
-  echo "  curl http://${LOCALVLLM_LISTEN_HOST}:${port}/v1/models \\"
+  echo "  curl http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):${port}/v1/models \\"
   echo "    -H \"Authorization: Bearer $secret\""
   echo
   echo "Run 'localvllm key list' to see all keys (masked)."

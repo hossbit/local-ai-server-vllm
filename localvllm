@@ -165,6 +165,9 @@ case "$COMMAND" in
   doctor)
     doctor_cmd "$@"
     ;;
+  config)
+    config_cmd "$@"
+    ;;
   update)
     update_cmd "$@"
     ;;

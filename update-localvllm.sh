@@ -136,52 +136,6 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
 done
 UPDATE_BACKENDS=("${UNIQUE[@]}")
 
-has_user_service() {
-  command -v systemctl >/dev/null 2>&1 &&
-    systemctl --user cat "$LOCALVLLM_SERVICE_NAME" >/dev/null 2>&1
-}
-
-service_is_active() {
-  if has_user_service && systemctl --user is-active --quiet "${LOCALVLLM_SERVICE_NAME%.service}" 2>/dev/null; then
-    return 0
-  fi
-  pid_file_matches_process "$PID_FILE" "$PID_START_FILE"
-}
-
-stop_localvllm() {
-  if has_user_service; then
-    log "Stopping $LOCALVLLM_BACKEND_LABEL service"
-    if ! systemctl --user stop "$LOCALVLLM_SERVICE_NAME"; then
-      warn "could not stop $LOCALVLLM_SERVICE_NAME"
-      return 1
-    fi
-  elif [ -x "$BIN_DIR/stop.sh" ]; then
-    log "Stopping $LOCALVLLM_BACKEND_LABEL"
-    if ! "$BIN_DIR/stop.sh" "$LOCALVLLM_BACKEND"; then
-      warn "could not stop $LOCALVLLM_BACKEND_LABEL"
-      return 1
-    fi
-  fi
-  return 0
-}
-
-start_localvllm() {
-  if has_user_service; then
-    log "Starting $LOCALVLLM_BACKEND_LABEL service"
-    if ! systemctl --user start "$LOCALVLLM_SERVICE_NAME"; then
-      warn "could not start $LOCALVLLM_SERVICE_NAME"
-      return 1
-    fi
-  elif [ -x "$BIN_DIR/start.sh" ]; then
-    log "Starting $LOCALVLLM_BACKEND_LABEL"
-    if ! "$BIN_DIR/start.sh" "$LOCALVLLM_BACKEND"; then
-      warn "could not start $LOCALVLLM_BACKEND_LABEL"
-      return 1
-    fi
-  fi
-  return 0
-}
-
 localvllm_archive_url() {
   # GitHub resolves unqualified branches and tags; explicit refs stay explicit.
   printf '%s/%s.tar.gz\n' "${LOCALVLLM_TARBALL_BASE:-https://github.com/hossbit/local-ai-server-vllm/archive}" "${LOCALVLLM_REF:-main}"
@@ -213,7 +167,7 @@ resolve_localvllm_source_dir() {
       "$LOCALVLLM_SOURCE_DIR"
   else
     archive_file="$TMP_DIR/localvllm.tar.gz"
-    curl -4 -fsSL "$(localvllm_archive_url)" -o "$archive_file"
+    curl -fsSL "$(localvllm_archive_url)" -o "$archive_file"
     tar -xzf "$archive_file" -C "$TMP_DIR"
     extracted="$(find "$TMP_DIR" -mindepth 1 -maxdepth 1 -type d | while IFS= read -r dir; do
       [ -f "$dir/install-localvllm.sh" ] && { printf '%s\n' "$dir"; break; }
@@ -542,7 +496,7 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     continue
   fi
   ANY_BACKEND=1
-  if service_is_active; then
+  if localvllm_service_is_active; then
     WAS_RUNNING["$BACKEND"]=1
   fi
   if [ "$SCRIPTS_ONLY" -eq 1 ]; then
@@ -555,6 +509,22 @@ done
 
 if [ "$ANY_BACKEND" -eq 0 ]; then
   fail "no installed backends matched the request. Install one with: localvllm backend install vllm"
+fi
+
+# Check before stopping anything so an out-of-space update does not cause
+# avoidable downtime. A fresh venv for an incompatible Omni Python is small;
+# the large staged copy is the case that matters here.
+if [ "$SCRIPTS_ONLY" -eq 0 ]; then
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    [ "${NEED[$BACKEND]:-none}" = "none" ] && continue
+    localvllm_use_backend "$BACKEND" || continue
+    if [ "$BACKEND" = "omni" ] && ! localvllm_omni_python_ok "$VENV_DIR/bin/python"; then
+      continue
+    fi
+    if ! vllm_venv_update_space_required "$VENV_DIR"; then
+      fail "not enough free disk space for the $BACKEND update; running services were left unchanged"
+    fi
+  done
 fi
 
 SCRIPTS_CHANGE=0
@@ -597,7 +567,7 @@ if [ "$SCRIPTS_CHANGE" = 1 ] || [ "$ROUTER_CHANGE" = 1 ]; then
       NEED["$BACKEND"]=none
       UPDATE_BACKENDS+=("$BACKEND")
     fi
-    if service_is_active; then WAS_RUNNING["$BACKEND"]=1; fi
+    if localvllm_service_is_active; then WAS_RUNNING["$BACKEND"]=1; fi
   done < <(localvllm_backend_list)
 fi
 for BACKEND in "${UPDATE_BACKENDS[@]}"; do
@@ -624,7 +594,7 @@ transaction_cleanup() {
     for backend in "${UPDATE_BACKENDS[@]}"; do
       localvllm_use_backend "$backend" || continue
       if [ -n "${WAS_RUNNING[$backend]+x}" ]; then
-        stop_localvllm || true
+        localvllm_stop_service || true
       fi
       if [ -n "${OLD_VENVS[$backend]:-}" ]; then
         vllm_venv_rollback_update "$VENV_DIR" "${OLD_VENVS[$backend]}" || true
@@ -649,7 +619,7 @@ transaction_cleanup() {
       [ "$START_AFTER_UPDATE" = 1 ] || continue
       [ -n "${WAS_RUNNING[$backend]+x}" ] || continue
       localvllm_use_backend "$backend" || continue
-      start_localvllm || true
+      localvllm_start_service || true
     done
   fi
   rm -rf "$TMP_DIR"
@@ -676,14 +646,14 @@ trap transaction_cleanup EXIT
 for BACKEND in "${UPDATE_BACKENDS[@]}"; do
   [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
   localvllm_use_backend "$BACKEND" || continue
-  if ! stop_localvllm; then
+  if ! localvllm_stop_service; then
     echo "Error: could not stop $BACKEND; refusing to modify its environment." >&2
     # Bring any already-stopped backends back before leaving.
     for OTHER in "${UPDATE_BACKENDS[@]}"; do
       [ "$START_AFTER_UPDATE" = 1 ] || continue
       [ -n "${WAS_RUNNING[$OTHER]+x}" ] || continue
       localvllm_use_backend "$OTHER" || continue
-      localvllm_service_is_active || start_localvllm || true
+      localvllm_service_is_active || localvllm_start_service || true
     done
     exit 1
   fi
@@ -744,7 +714,7 @@ if [ "$START_AFTER_UPDATE" -eq 1 ]; then
   for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     [ -n "${WAS_RUNNING[$BACKEND]+x}" ] || continue
     localvllm_use_backend "$BACKEND" || continue
-    if ! start_localvllm; then
+    if ! localvllm_start_service; then
       echo "Error: $BACKEND failed to start after the update." >&2
       START_FAILED["$BACKEND"]=1
       UPDATE_FAILED=1

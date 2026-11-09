@@ -72,14 +72,19 @@ localvllm_router_generate() (
   set -euo pipefail
   umask 077
   local output_sh="$1" output_env="$2" binary rebuild work root id source model format path
-  local worker hash cmd served key port config digest count=0
+  local worker hash cmd served key port config digest temp_root="" count=0
   binary="$(localvllm_swap_bin)" || { echo 'Enable automatic switching with: localvllm mode swap' >&2; return 1; }
   case "$LOCALVLLM_LISTEN_HOST" in 127.0.0.1|localhost) ;; *) echo 'Automatic switching currently requires a loopback listener; use an authenticated reverse proxy for network access.' >&2; return 1 ;; esac
   rebuild="$SCRIPT_DIR/rebuild-config.sh"
-  root="$CONF_DIR/router"
-  mkdir -p "$root"
+  if [ "${LOCALVLLM_RUNTIME_CHECK:-0}" = "1" ]; then
+    temp_root="$(mktemp -d "${TMPDIR:-/tmp}/localvllm-router-check.XXXXXX")" || return 1
+    root="$temp_root"
+  else
+    root="$CONF_DIR/router"
+    mkdir -p "$root"
+  fi
   work="$(mktemp -d "$root/.generate.XXXXXX")"
-  trap 'rm -rf "$work"' EXIT
+  trap 'rm -rf "$work"; [ -z "${temp_root:-}" ] || rm -rf "$temp_root"' EXIT
   config="$work/config.json"
   api_key_registry_validate "$CONF_DIR/$LOCALVLLM_API_KEY_FILE" || return 1
   key="$(api_key_active_secrets "$CONF_DIR/$LOCALVLLM_API_KEY_FILE" | head -n1)"
@@ -128,7 +133,7 @@ localvllm_router_generate() (
   } > "$work/serve.env"
   install -m700 "$work/serve.sh" "$output_sh"
   install -m600 "$work/serve.env" "$output_env"
-  echo "Automatic switching: $count models, $LOCALVLLM_BACKEND, http://$LOCALVLLM_LISTEN_HOST:$port/v1"
+  echo "Automatic switching: $count models, $LOCALVLLM_BACKEND, http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):$port/v1"
 )
 
 mode_cmd() {

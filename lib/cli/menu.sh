@@ -6,7 +6,7 @@ model_register() {
   file="$OVERRIDES_DIR/$(localvllm_safe_id "$id").conf"
   if [ -f "$file" ]; then
     meta="$(localvllm_override_meta "$file")"
-    IFS=$'\t' read -r _ old _ <<< "$meta"
+    IFS=$'\037' read -r _ old _ <<< "$meta"
     [ -z "$old" ] || [ "$old" = "$spec" ] || { echo "Error: $id already points to a different model." >&2; return 1; }
     if [ -n "$old" ]; then return 0; fi
   fi
@@ -328,8 +328,10 @@ download_guidance() {
 remove_cmd() {
   local id="${1:-}" file link backup
   [ "$#" = 1 ] || fail 'usage: localvllm remove MODEL'
-  file="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id")" || return 1
-  [ -f "$file" ] || fail 'No registration found. Move manually managed folders outside the model library to stop discovering them.'
+  file="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id")" || file=""
+  if [ -z "$file" ] || [ ! -f "$file" ]; then
+    fail "No registration found for '$id'. Move manually managed folders outside the model library to stop discovering them."
+  fi
   [ "$(cat "$ACTIVE_MODEL_FILE" 2>/dev/null || true)" != "$id" ] || fail 'Select another direct-mode model before removing this one.'
   if service_is_active; then fail 'Stop this backend before removing a registration.'; fi
   link="$MODELS_DIR/$(localvllm_safe_id "$id")"

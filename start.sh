@@ -91,6 +91,7 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || ((10#$PORT < 1 || 10#$PORT > 65535)); then
   echo "Error: invalid port in $PORT_FILE: $PORT" >&2
   exit 1
 fi
+URL_HOST="$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST")"
 
 if [ -f "$PID_FILE" ]; then
   PID="$(<"$PID_FILE")"
@@ -155,6 +156,19 @@ localvllm_rotate_log "$LOG_FILE"
 (umask 077; touch "$LOG_FILE")
 chmod 600 "$LOG_FILE"
 
+# Under systemd the unit is Type=simple, so this script must exec the engine and
+# stay in the foreground. systemd then tracks the real vLLM process and reports
+# the service failed immediately if it crashes. No PID file, setsid or nohup is
+# used in this mode.
+if [ "${LOCALVLLM_SYSTEMD_UNIT:-0}" = "1" ]; then
+  rm -f "$PID_FILE" "$PID_START_FILE" "$CONF_DIR/process-group"
+  localvllm_link_cached_model \
+    "$(config_assignment_value LOCALVLLM_MODEL "$SERVE_ENV" 2>/dev/null || true)" \
+    "$(config_assignment_value LOCALVLLM_REVISION "$SERVE_ENV" 2>/dev/null || true)" || true
+  echo "Starting Local $LOCALVLLM_BACKEND_LABEL under systemd on $URL_HOST:$PORT" >> "$LOG_FILE"
+  exec "$SERVE_SH" 9>&- >> "$LOG_FILE" 2>&1
+fi
+
 PROCESS_GROUP=0
 if command -v setsid >/dev/null 2>&1; then
   # Do not let the long-running vLLM process inherit the manager lock FD.
@@ -178,12 +192,12 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
     fail_start "vLLM exited during startup"
   fi
   if command -v curl >/dev/null 2>&1 &&
-    curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "http://${LOCALVLLM_LISTEN_HOST}:${PORT}/health" >/dev/null 2>&1; then
+    curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "http://${URL_HOST}:${PORT}/health" >/dev/null 2>&1; then
     READY=1
     break
   fi
   if command -v curl >/dev/null 2>&1 &&
-    curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "http://${LOCALVLLM_LISTEN_HOST}:${PORT}/v1/models" >/dev/null 2>&1; then
+    curl "${AUTH_CURL_ARGS[@]}" --max-time 2 -fsS "http://${URL_HOST}:${PORT}/v1/models" >/dev/null 2>&1; then
     READY=1
     break
   fi
@@ -191,13 +205,13 @@ while [ "$SECONDS" -lt "$DEADLINE" ]; do
 done
 
 if [ "$READY" -ne 1 ]; then
-  fail_start "vLLM started but the API did not become ready at http://${LOCALVLLM_LISTEN_HOST}:${PORT}/health"
+  fail_start "vLLM started but the API did not become ready at http://${URL_HOST}:${PORT}/health"
 fi
 
 ACTIVE_ID="$(config_assignment_value LOCALVLLM_ACTIVE_ID "$SERVE_ENV" 2>/dev/null || true)"
 SERVED_NAME="$(config_assignment_value LOCALVLLM_SERVED_MODEL_NAME "$SERVE_ENV" 2>/dev/null || true)"
 
-echo "Local $LOCALVLLM_BACKEND_LABEL started at http://${LOCALVLLM_LISTEN_HOST}:${PORT} (PID $PID)"
+echo "Local $LOCALVLLM_BACKEND_LABEL started at http://${URL_HOST}:${PORT} (PID $PID)"
 echo "Model: ${ACTIVE_ID:-unknown}${SERVED_NAME:+ (served as $SERVED_NAME)}"
 echo "Use 'localvllm --backend $LOCALVLLM_BACKEND models' to see model IDs."
 localvllm_link_cached_model \
