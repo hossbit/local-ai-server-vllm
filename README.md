@@ -220,6 +220,12 @@ Run `localvllm models --paths` to see storage locations, then select a folder
 with `localvllm use FOLDER_NAME`. Existing folders elsewhere also work with
 `localvllm use /path/to/model`. [Model storage guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#add-models).
 
+Under systemd the service runs in the foreground (`Type=simple`). `localvllm
+start` and `restart` return once the API answers, or fail after
+`LOCALVLLM_HEALTH_CHECK_TIMEOUT` seconds. If the engine crashes, systemd
+restarts it, and `localvllm status` reports it as not running in the meantime.
+Set `LOCALVLLM_READY_WAIT=0` to return as soon as systemd has started the unit.
+
 Per-model tuning files in `conf/backends/<backend>/models.d/` are sourced as
 Bash. They can set shell variables and arrays such as `EXTRA_ARGS`, so only
 install or edit files you trust and keep them owned by your user.
