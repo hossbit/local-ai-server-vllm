@@ -443,7 +443,10 @@ if [ "$ENGINE_DEFAULTS" = "0" ]; then
   [ "$ENFORCE_EAGER" = "0" ] || VLLM_ARGS+=(--enforce-eager)
 fi
 [ "$TRUST_REMOTE_CODE" = "0" ] || VLLM_ARGS+=(--trust-remote-code)
-[ "$DISABLE_LOG_REQUESTS" = "0" ] || VLLM_ARGS+=(--disable-log-requests)
+# Request logging is opt-in in current vLLM, so "disabled" needs no flag.
+# --disable-log-requests exists only in some releases (0.32.0 rejects it and
+# exits), while --enable-log-requests is accepted across them.
+[ "$DISABLE_LOG_REQUESTS" != "0" ] || VLLM_ARGS+=(--enable-log-requests)
 [ "$ENABLE_SLEEP" = "0" ] || VLLM_ARGS+=(--enable-sleep-mode)
 if [ "$ENGINE_DEFAULTS" = "0" ] && [ -n "$TASK" ]; then
   # Current vLLM selects pooling/generation with --runner; --task was removed.

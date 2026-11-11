@@ -106,7 +106,7 @@ else
 fi
 
 case "$COMMAND" in
-  mode|pull|add|remove|start|stop|restart|reload|use|switch|load|unload|key|backend|update|uninstall)
+  mode|pull|add|remove|start|stop|restart|reload|use|switch|load|unload|key|backend|update|rollback|uninstall)
     localvllm_acquire_global_lock
     # shellcheck disable=SC2153 # Backend is selected by localvllm_use_backend.
     trap 'localvllm_log_event "$?" "$COMMAND" "$LOCALVLLM_BACKEND" || true' EXIT
@@ -170,6 +170,9 @@ case "$COMMAND" in
     ;;
   update)
     update_cmd "$@"
+    ;;
+  rollback)
+    rollback_cmd "$@"
     ;;
   version)
     version_cmd "$@"

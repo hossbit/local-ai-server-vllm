@@ -195,6 +195,9 @@ for BACKEND in "${REMOVE_BACKENDS[@]}"; do
   echo "  state:   $CONF_DIR"
   echo "  log:     $LOG_FILE"
   [ "$KEEP_VENV" -eq 1 ] || echo "  venv:    $VENV_DIR"
+  if [ "$KEEP_VENV" -eq 0 ] && [ -d "$VENV_DIR.previous" ]; then
+    echo "  venv:    $VENV_DIR.previous (rollback environment)"
+  fi
 done
 
 if [ "$REMOVE_MODELS" -eq 1 ]; then
@@ -258,6 +261,7 @@ for BACKEND in "${REMOVE_BACKENDS[@]}"; do
   remove_if_exists "$CONF_DIR"
   remove_if_exists "$LOG_FILE"
   [ "$KEEP_VENV" -eq 1 ] || remove_if_exists "$VENV_DIR"
+  [ "$KEEP_VENV" -eq 1 ] || remove_if_exists "$VENV_DIR.previous"
 done
 
 if [ "$REMOVE_ALL" -eq 1 ] && [ "$KEEP_VENV" -eq 0 ]; then

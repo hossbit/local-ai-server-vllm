@@ -33,7 +33,9 @@ Commands:
                          Check Python, vLLM, GPU, models, ports, keys, pip
   config check [BACKEND|all]
                          Validate configuration without changing the launcher
-  update [--all]         Update selected backend, router and helpers; --all updates every backend
+  update [--all|--check] Update selected backend, router and helpers; --all updates every backend,
+                         --check only reports available updates
+  rollback [BACKEND]     Switch a backend back to the environment its last update replaced
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
   menu                   Manage models and serving mode interactively
@@ -153,6 +155,8 @@ Troubleshooting — commands work with --backend omni too.
   localvllm update --scripts-only   Refresh manager helpers
   localvllm update                  Update this backend, router and helpers
   localvllm update --all            Update every installed backend
+  localvllm update --check          Show available updates without changing anything
+  localvllm rollback                Return this backend to the environment before its last update
 No model? Use models, pull ORG/MODEL, then use MODEL and start.
 Memory error? Choose a smaller model/context or review help models and suggest MODEL.
 For ARM64, ROCm and Fedora/RHEL, consult the platform guide before selecting wheels:

@@ -41,6 +41,7 @@ LOCALVLLM_SOURCE_DIR=""
 START_AFTER_UPDATE=1
 SCRIPTS_ONLY=0
 VLLM_ONLY=0
+CHECK_ONLY=0
 UPDATE_BACKENDS=()
 TMP_DIR=""
 STAGED_UPDATER=""
@@ -69,13 +70,14 @@ have() {
 
 usage() {
   cat <<EOF
-Usage: $0 [--no-start] [--backend NAME|all] [--scripts-only] [--vllm-only]
+Usage: $0 [--check] [--no-start] [--backend NAME|all] [--scripts-only] [--vllm-only]
 
 Updates the manager, selected engine packages, and installed managed llama-swap.
 
 Options:
   --backend NAME   Update vllm, omni, or all (default: selected backend)
   --all            Update every installed backend
+  --check          Only report installed and latest versions; change nothing
   --no-start       Leave previously running services stopped
   --scripts-only   Refresh helper scripts/config; keep engine/router versions
   --vllm-only      Upgrade engine packages only; keep manager/router versions
@@ -83,6 +85,10 @@ Options:
 
 vLLM and vLLM-Omni use separate venvs. When pinning vLLM-Omni, keep
 VLLM_OMNI_VERSION on the same release line as VLLM_VERSION.
+
+If a restarted service does not become ready, everything is restored. After
+a successful package update the replaced environment is kept for
+'localvllm rollback' (set LOCALVLLM_KEEP_PREVIOUS=0 to delete it instead).
 EOF
 }
 
@@ -106,6 +112,7 @@ while [ "$#" -gt 0 ]; do
     --no-start) START_AFTER_UPDATE=0 ;;
     --scripts-only) SCRIPTS_ONLY=1 ;;
     --vllm-only) VLLM_ONLY=1 ;;
+    --check) CHECK_ONLY=1 ;;
     --backend)
       [ "$#" -ge 2 ] || fail "missing name after --backend"
       add_backend "$2"
@@ -476,7 +483,7 @@ mkdir -p "$AI_DIR" "$BIN_DIR" "$LIB_DIR" "$CONF_ROOT"
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
-if [ "$VLLM_ONLY" -eq 0 ]; then
+if [ "$VLLM_ONLY" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
   resolve_localvllm_source_dir
 fi
 
@@ -511,6 +518,54 @@ if [ "$ANY_BACKEND" -eq 0 ]; then
   fail "no installed backends matched the request. Install one with: localvllm backend install vllm"
 fi
 
+# --check: report each engine independently and exit before anything is
+# stopped, staged, or downloaded.
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  echo
+  CHECK_UPDATES=0
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    [ -n "${NEED[$BACKEND]+x}" ] || continue
+    localvllm_use_backend "$BACKEND" || continue
+    # shellcheck disable=SC2031 # localvllm_use_backend set it for this backend.
+    if [ "$BACKEND" = "omni" ] && [ "${VLLM_VERSION:-latest}" = "latest" ]; then
+      # Unpinned, Omni's vLLM is whatever vLLM-Omni requires, not PyPI's latest.
+      printf '%s: vLLM installed=%s (follows vLLM-Omni)\n' "$BACKEND" \
+        "$(vllm_installed_version "$VENV_DIR")"
+    else
+      printf '%s: vLLM installed=%s target=%s\n' "$BACKEND" \
+        "$(vllm_installed_version "$VENV_DIR")" \
+        "$(target_version VLLM_VERSION vllm 2>/dev/null || printf 'unknown (PyPI unreachable)')"
+    fi
+    if [ "$BACKEND" = "omni" ]; then
+      printf '%s: vLLM-Omni installed=%s target=%s\n' "$BACKEND" \
+        "$(vllm_omni_installed_version "$VENV_DIR")" \
+        "$(target_version VLLM_OMNI_VERSION omni 2>/dev/null || printf 'unknown (PyPI unreachable)')"
+    fi
+    if [ "${NEED[$BACKEND]}" != "none" ]; then
+      echo "  -> update available (${NEED[$BACKEND]})"
+      CHECK_UPDATES=1
+    fi
+    if vllm_venv_has_previous "$VENV_DIR"; then
+      echo "  rollback environment: vLLM $(vllm_installed_version "$(vllm_venv_previous_dir "$VENV_DIR")")"
+    fi
+  done
+  if SWAP_BIN="$(localvllm_swap_bin)" &&
+    [ "$(realpath "$SWAP_BIN")" = "$(realpath -m "$BIN_DIR/llama-swap")" ]; then
+    SWAP_CURRENT="$(localvllm_swap_version "$SWAP_BIN")" || SWAP_CURRENT=""
+    if SWAP_TARGET="$(localvllm_swap_target_version)"; then
+      printf 'llama-swap: installed=%s target=%s\n' "${SWAP_CURRENT:-unknown}" "$SWAP_TARGET"
+      [ "$SWAP_CURRENT" = "$SWAP_TARGET" ] || CHECK_UPDATES=1
+    fi
+  fi
+  echo
+  if [ "$CHECK_UPDATES" -eq 1 ]; then
+    echo "Updates are available. Nothing was changed; run 'localvllm update' to install them."
+  else
+    echo "Engines are up to date. Nothing was changed."
+  fi
+  exit 0
+fi
+
 # Check before stopping anything so an out-of-space update does not cause
 # avoidable downtime. A fresh venv for an incompatible Omni Python is small;
 # the large staged copy is the case that matters here.
@@ -520,6 +575,13 @@ if [ "$SCRIPTS_ONLY" -eq 0 ]; then
     localvllm_use_backend "$BACKEND" || continue
     if [ "$BACKEND" = "omni" ] && ! localvllm_omni_python_ok "$VENV_DIR/bin/python"; then
       continue
+    fi
+    if ! vllm_venv_update_space_required "$VENV_DIR" 2>/dev/null &&
+      vllm_venv_has_previous "$VENV_DIR"; then
+      # The environment kept for rollback is about to be replaced by the
+      # current one anyway; free its space first instead of refusing.
+      log "Removing the older $BACKEND rollback environment to free disk space"
+      rm -rf "$(vllm_venv_previous_dir "$VENV_DIR")"
     fi
     if ! vllm_venv_update_space_required "$VENV_DIR"; then
       fail "not enough free disk space for the $BACKEND update; running services were left unchanged"
@@ -731,20 +793,26 @@ if [ "$UPDATE_FAILED" -ne 0 ]; then
 fi
 
 commit_staged_helpers
+TRANSACTION_READY=0
+# The services work with the new environments. Keep each replaced one (with
+# the record still in CONF_DIR that describes it) for `localvllm rollback`,
+# then record the new environment.
+for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+  [ -n "${OLD_VENVS[$BACKEND]:-}" ] || continue
+  [ -z "${START_FAILED[$BACKEND]+x}" ] || continue
+  localvllm_use_backend "$BACKEND" || continue
+  if ! vllm_venv_keep_previous "$VENV_DIR" "${OLD_VENVS[$BACKEND]}" "$CONF_DIR"; then
+    warn "could not keep the previous $BACKEND environment for rollback"
+    vllm_venv_finish_update "${OLD_VENVS[$BACKEND]}"
+  elif vllm_venv_has_previous "$VENV_DIR"; then
+    echo "Previous $BACKEND environment kept for 'localvllm rollback $BACKEND'."
+  fi
+  OLD_VENVS["$BACKEND"]=""
+done
 for BACKEND in "${UPDATE_BACKENDS[@]}"; do
   localvllm_use_backend "$BACKEND" || continue
   localvllm_backend_installed "$BACKEND" || continue
   write_environment_manifest "$VENV_DIR" "$CONF_DIR" "$BACKEND"
-done
-TRANSACTION_READY=0
-# A previous environment is only needed until its service has started. Keep it
-# for backends that failed to start, remove it for successful/not-running ones.
-for BACKEND in "${UPDATE_BACKENDS[@]}"; do
-  [ -n "${OLD_VENVS[$BACKEND]:-}" ] || continue
-  if [ -z "${START_FAILED[$BACKEND]+x}" ]; then
-    vllm_venv_finish_update "${OLD_VENVS[$BACKEND]}"
-    OLD_VENVS["$BACKEND"]=""
-  fi
 done
 
 log "Local vLLM update completed"

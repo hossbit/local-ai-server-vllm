@@ -569,6 +569,75 @@ vllm_venv_finish_update() {
   return 0
 }
 
+# --- Rollback environment ----------------------------------------------------
+# After a successful update the environment it replaced is kept beside the
+# live one as "<venv>.previous" (LOCALVLLM_KEEP_PREVIOUS=1, the default), with
+# its environment record, so `localvllm rollback` can switch back. Each
+# backend keeps its own complete environment: a rollback never downgrades a
+# single package inside a shared set. The active environment always lives at
+# the original path, so pip entry points written for that path stay valid.
+
+vllm_venv_previous_dir() {
+  printf '%s.previous\n' "$1"
+}
+
+vllm_venv_has_previous() {
+  [ -x "$(vllm_venv_previous_dir "$1")/bin/python" ]
+}
+
+# vllm_venv_keep_previous VENV OLD CONF_DIR: called once the updated service
+# works. OLD is the replaced environment from vllm_venv_commit_update; CONF_DIR
+# still holds that environment's record (written before this update).
+vllm_venv_keep_previous() {
+  local venv="$1" old="$2" conf_dir="$3" previous file
+
+  [ -n "$old" ] && [ -e "$old" ] || return 0
+  previous="$(vllm_venv_previous_dir "$venv")"
+  if [ "${LOCALVLLM_KEEP_PREVIOUS:-1}" != "1" ]; then
+    rm -rf "$old" "$previous"
+    return 0
+  fi
+  for file in environment.txt environment.lock; do
+    if [ -f "$conf_dir/$file" ]; then
+      cp -p "$conf_dir/$file" "$old/.localvllm-$file" 2>/dev/null || true
+    fi
+  done
+  rm -rf "$previous"
+  mv "$old" "$previous"
+}
+
+# vllm_venv_swap_previous VENV CONF_DIR: exchange the live and previous
+# environments together with their records. Running it twice is a no-op, so
+# the same call both rolls back and returns to the newer environment.
+vllm_venv_swap_previous() {
+  local venv="$1" conf_dir="$2" previous tmp file
+
+  previous="$(vllm_venv_previous_dir "$venv")"
+  [ -x "$previous/bin/python" ] || return 1
+  tmp="$venv.swap.$$"
+  rm -rf "$tmp"
+  mv "$venv" "$tmp" || return 1
+  if ! mv "$previous" "$venv"; then
+    mv "$tmp" "$venv"
+    return 1
+  fi
+  mv "$tmp" "$previous" || return 1
+
+  # The record in CONF_DIR described the environment now at $previous.
+  for file in environment.txt environment.lock; do
+    if [ -f "$conf_dir/$file" ]; then
+      mv -f "$conf_dir/$file" "$tmp.$file"
+    fi
+    if [ -f "$venv/.localvllm-$file" ]; then
+      mv -f "$venv/.localvllm-$file" "$conf_dir/$file"
+    fi
+    if [ -f "$tmp.$file" ]; then
+      mv -f "$tmp.$file" "$previous/.localvllm-$file"
+    fi
+  done
+  return 0
+}
+
 vllm_bootstrap_pip() {
   local venv="$1"
   local log_file="${2:-}"
@@ -757,6 +826,33 @@ vllm_omni_pip_install() {
   fi
 }
 
+vllm_package_version() {
+  local venv="$1" package="$2"
+
+  [ -x "$venv/bin/python" ] || return 0
+  "$venv/bin/python" -c 'import sys; from importlib.metadata import version; print(version(sys.argv[1]))' \
+    "$package" 2>/dev/null | head -n1 || true
+}
+
+# vllm_torch_accelerator VENV: prints e.g. "cuda 13.0", "rocm 6.3" or "cpu",
+# read from torch/version.py without importing torch (fast, no GPU access).
+vllm_torch_accelerator() {
+  local venv="$1"
+
+  [ -x "$venv/bin/python" ] || return 0
+  "$venv/bin/python" - <<'PYTHON' 2>/dev/null || true
+import importlib.util, os, re
+spec = importlib.util.find_spec("torch")
+if spec and spec.origin:
+    text = open(os.path.join(os.path.dirname(spec.origin), "version.py")).read()
+    def value(name):
+        match = re.search(r"^%s\s*(?::[^=]*)?=\s*['\"]([^'\"]+)['\"]" % name, text, re.M)
+        return match.group(1) if match else ""
+    cuda, hip = value("cuda"), value("hip")
+    print("rocm " + hip if hip else "cuda " + cuda if cuda else "cpu")
+PYTHON
+}
+
 write_environment_manifest() {
   local venv="$1"
   local conf_dir="$2"
@@ -768,13 +864,28 @@ write_environment_manifest() {
     active_id="$(<"$conf_dir/$LOCALVLLM_ACTIVE_MODEL_FILE")"
   fi
 
+  # Package versions come from metadata, so this never imports torch or
+  # touches the GPU; torch_build is the CUDA/ROCm runtime the PyTorch wheel was
+  # built for. The *_policy lines record what was requested
+  # (normally "latest"); the versions record what that resolved to.
   {
     printf 'backend=%s\n' "$backend"
     printf 'created=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     printf 'python=%s\n' "$(python_version "$venv/bin/python" 2>/dev/null || true)"
     printf 'vllm=%s\n' "$(vllm_installed_version "$venv" 2>/dev/null || true)"
+    printf 'vllm_policy=%s\n' "${VLLM_VERSION:-latest}"
     if [ "$backend" = "omni" ]; then
       printf 'vllm_omni=%s\n' "$(vllm_omni_installed_version "$venv" 2>/dev/null || true)"
+      printf 'vllm_omni_policy=%s\n' "${VLLM_OMNI_VERSION:-latest}"
+    fi
+    printf 'torch=%s\n' "$(vllm_package_version "$venv" torch)"
+    printf 'torch_build=%s\n' "$(vllm_torch_accelerator "$venv")"
+    printf 'target_device=%s\n' "${VLLM_TARGET_DEVICE:-auto}"
+    printf 'os=%s\n' "$( (. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-}") || true)"
+    printf 'architecture=%s\n' "$(uname -m 2>/dev/null || true)"
+    if command -v nvidia-smi >/dev/null 2>&1; then
+      printf 'gpu=%s\n' "$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | paste -sd', ' - || true)"
+      printf 'driver=%s\n' "$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n1 || true)"
     fi
     printf 'model=%s\n' "$active_id"
   } > "$conf_dir/environment.txt"

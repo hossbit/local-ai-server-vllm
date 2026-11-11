@@ -225,6 +225,9 @@ version_one() {
   else
     echo "Python: virtual environment missing"
   fi
+  if vllm_venv_has_previous "$VENV_DIR"; then
+    echo "Rollback: available ('localvllm rollback $LOCALVLLM_BACKEND')"
+  fi
 
   if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" 2>/dev/null; then
     active_id="$ACTIVE_ID"
@@ -252,6 +255,85 @@ version_one() {
   else
     echo "Service: not installed"
   fi
+}
+
+rollback_describe() {
+  local venv="$1" version
+
+  version="vLLM $(vllm_installed_version "$venv")"
+  if [ "$LOCALVLLM_BACKEND" = "omni" ]; then
+    version="$version, vLLM-Omni $(vllm_omni_installed_version "$venv")"
+  fi
+  printf '%s\n' "$version"
+}
+
+# rollback_activate WAS_ACTIVE: make the environment now at $VENV_DIR live --
+# it must import, its launcher is regenerated for it (supported flags can
+# differ between releases), and a service that was running must become ready.
+rollback_activate() {
+  local was_active="$1" rebuild="$BIN_DIR/rebuild-config.sh"
+
+  vllm_verify_install "$VENV_DIR" >/dev/null || return 1
+  if [ "$LOCALVLLM_BACKEND" = "omni" ]; then
+    vllm_omni_verify_install "$VENV_DIR" >/dev/null || return 1
+  fi
+  [ -x "$rebuild" ] || rebuild="$SCRIPT_DIR/rebuild-config.sh"
+  if [ -x "$rebuild" ] && localvllm_require_start_model >/dev/null 2>&1; then
+    "$rebuild" --backend "$LOCALVLLM_BACKEND" >/dev/null || return 1
+  fi
+  if [ "$was_active" = 1 ]; then
+    localvllm_start_service || return 1
+  fi
+  return 0
+}
+
+# rollback_cmd [BACKEND]: swap one backend's environment with the one its last
+# successful update replaced. Running it again returns to the newer one. The
+# other backend, models, keys and settings are not touched.
+rollback_cmd() {
+  local selector was_active=0 previous
+
+  [ "$#" -le 1 ] || fail "usage: localvllm rollback [BACKEND]"
+  if [ "$#" -eq 1 ]; then
+    selector="$(localvllm_resolve_selector "$1")" || return 1
+    [ "$selector" != "all" ] || fail "roll back one backend at a time: localvllm rollback vllm|omni"
+    localvllm_use_backend "$selector" || return 1
+  fi
+
+  previous="$(vllm_venv_previous_dir "$VENV_DIR")"
+  if ! vllm_venv_has_previous "$VENV_DIR"; then
+    fail "no previous $LOCALVLLM_BACKEND_LABEL environment to roll back to.
+One is kept after each successful 'localvllm update' that changed packages
+(unless LOCALVLLM_KEEP_PREVIOUS=0)."
+  fi
+
+  echo "$LOCALVLLM_BACKEND_LABEL ($LOCALVLLM_BACKEND)"
+  echo "  current:   $(rollback_describe "$VENV_DIR")"
+  echo "  restoring: $(rollback_describe "$previous")"
+  echo
+
+  if localvllm_service_is_active; then
+    was_active=1
+    echo "Stopping $LOCALVLLM_SERVICE_NAME; active requests will be interrupted."
+    localvllm_stop_service || fail "could not stop $LOCALVLLM_SERVICE_NAME; nothing was changed"
+  fi
+
+  if ! vllm_venv_swap_previous "$VENV_DIR" "$CONF_DIR"; then
+    [ "$was_active" = 0 ] || localvllm_start_service || true
+    fail "could not swap the environments; nothing was changed"
+  fi
+
+  if ! rollback_activate "$was_active"; then
+    echo "Error: the restored environment did not work; switching back." >&2
+    localvllm_stop_service >/dev/null 2>&1 || true
+    vllm_venv_swap_previous "$VENV_DIR" "$CONF_DIR" ||
+      fail "could not switch back automatically; run 'localvllm rollback $LOCALVLLM_BACKEND' again"
+    rollback_activate "$was_active" || true
+    fail "rollback failed; the environment that was active before is in use again"
+  fi
+
+  echo "Rolled back $LOCALVLLM_BACKEND to $(rollback_describe "$VENV_DIR")."
+  echo "Run 'localvllm rollback $LOCALVLLM_BACKEND' again to return to the newer environment."
 }
 
 uninstall_cmd() {

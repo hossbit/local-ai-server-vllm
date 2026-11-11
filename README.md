@@ -204,6 +204,8 @@ localvllm status                # Check the selected backend
 localvllm version               # Manager, engines, Python and optional router
 localvllm update                # Active backend, llama-swap and helpers
 localvllm update --all          # Every installed backend
+localvllm update --check        # Show available updates; change nothing
+localvllm rollback              # Return to the environment before the last update
 localvllm models                # List models
 localvllm start                 # Start the server
 localvllm stop                  # Stop the server
@@ -225,6 +227,19 @@ start` and `restart` return once the API answers, or fail after
 `LOCALVLLM_HEALTH_CHECK_TIMEOUT` seconds. If the engine crashes, systemd
 restarts it, and `localvllm status` reports it as not running in the meantime.
 Set `LOCALVLLM_READY_WAIT=0` to return as soon as systemd has started the unit.
+
+Updates always resolve the newest vLLM / vLLM-Omni release from PyPI unless
+you pin `VLLM_VERSION` or `VLLM_OMNI_VERSION`. Each backend is updated in its
+own staged copy, verified (import, `pip check`), and only then promoted; if a
+restarted service does not become ready, everything is restored. After a
+successful update the replaced environment is kept as `<venv>.previous`, so
+`localvllm rollback vllm` (or `omni`) can switch back, and running it again
+returns to the newer one. Only one previous environment is kept per backend.
+It uses the disk space of a full venv; set `LOCALVLLM_KEEP_PREVIOUS=0` to
+delete it after each successful update. `conf/backends/<backend>/environment.txt`
+records the resolved Python, vLLM, vLLM-Omni, and PyTorch versions, the CUDA or
+ROCm runtime that PyTorch was built for, the GPU and driver, and the requested
+version policy. `environment.lock` holds the full `pip freeze`.
 
 Per-model tuning files in `conf/backends/<backend>/models.d/` are sourced as
 Bash. They can set shell variables and arrays such as `EXTRA_ARGS`, so only
