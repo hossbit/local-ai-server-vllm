@@ -260,6 +260,7 @@ install_backend_packages() {
     echo "Error: pip check failed for $name; the installed package set is inconsistent." >&2
     return 1
   fi
+  vllm_download_kernels "$target_venv" "$pip_log"
   return 0
 }
 
@@ -337,6 +338,9 @@ install_backend() {
   : > "$pip_log"
 
   vllm_bootstrap_pip "$target_venv" "$pip_log" || install_status=1
+  # A reinstall starts from a copy of the old environment; kernels built for
+  # its FlashInfer would not load with the new one. They are fetched again.
+  [ "$install_status" -ne 0 ] || vllm_remove_kernel_packages "$target_venv" "$pip_log"
   if [ "$install_status" -eq 0 ]; then
     install_backend_packages "$name" "$target_venv" "$pip_log" || install_status=1
   fi

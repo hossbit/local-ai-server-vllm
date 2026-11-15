@@ -654,10 +654,16 @@ vllm_bootstrap_pip() {
   fi
 }
 
+# `pip check`, except for the one complaint FlashInfer's GPU-only kernel
+# install causes by design: its flashinfer-jit-cache shim lists every
+# architecture's provider, and only this GPU's provider is installed.
 vllm_pip_check() {
   local venv="$1"
+  local report
 
-  "$venv/bin/python" -m pip check >/dev/null 2>&1
+  report="$("$venv/bin/python" -m pip check 2>&1)" && return 0
+  report="$(printf '%s\n' "$report" | grep -Ev '^flashinfer-jit-cache [^ ]+ requires flashinfer-jit-cache-sm[0-9]+[a-z]*, which is not installed\.$' | grep -v '^[[:space:]]*$')"
+  [ -z "$report" ]
 }
 
 vllm_pip_install() {
@@ -836,6 +842,145 @@ vllm_package_version() {
 
 # vllm_torch_accelerator VENV: prints e.g. "cuda 13.0", "rocm 6.3" or "cpu",
 # read from torch/version.py without importing torch (fast, no GPU access).
+# Precompiled FlashInfer kernels. vLLM asks for `vllm download-kernels` after
+# every install or upgrade; without the kernels (and without nvcc) it disables
+# FlashInfer. LOCALVLLM_DOWNLOAD_KERNELS: 1 installs the cubins plus only the
+# JIT cache for this machine's GPU architectures, "all" installs every
+# architecture (what `vllm download-kernels` does, about 10 GB), 0 skips it.
+
+vllm_kernels_enabled() {
+  case "${LOCALVLLM_DOWNLOAD_KERNELS:-1}" in
+    0|off|no|false) return 1 ;;
+  esac
+  return 0
+}
+
+# FlashInfer providers are named after the CUDA architecture: sm86, sm90, ...
+vllm_gpu_sm_tags() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 0
+  nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null |
+    sed -n 's/^[[:space:]]*\([0-9][0-9]*\)\.\([0-9][0-9]*\)[[:space:]]*$/sm\1\2/p' | sort -u
+}
+
+vllm_kernel_packages() {
+  local venv="$1"
+
+  "$venv/bin/python" -m pip list --format=freeze 2>/dev/null |
+    sed -n 's/^\(flashinfer-cubin\|flashinfer-jit-cache[A-Za-z0-9_.-]*\)==.*/\1/p'
+}
+
+vllm_kernel_size_kb() {
+  local venv="$1" site
+
+  site="$("$venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)" || {
+    echo 0
+    return 0
+  }
+  du -skc "$site/flashinfer_cubin" "$site/flashinfer_jit_cache" 2>/dev/null |
+    awk 'END { print ($1 ~ /^[0-9]+$/) ? $1 : 0 }'
+}
+
+vllm_remove_kernel_packages() {
+  local venv="$1"
+  local log_file="${2:-/dev/null}"
+  local site dir
+  local -a packages=()
+
+  mapfile -t packages < <(vllm_kernel_packages "$venv")
+  if [ "${#packages[@]}" -gt 0 ]; then
+    "$venv/bin/python" -m pip uninstall -y "${packages[@]}" >>"$log_file" 2>&1 || true
+  fi
+  # The per-architecture JIT cache wheels share one package directory, and pip
+  # leaves its empty tree behind. Python would import that as a namespace
+  # package without __version__, which makes `import flashinfer` fail.
+  site="$("$venv/bin/python" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])' 2>/dev/null)" || return 0
+  for dir in "$site/flashinfer_jit_cache" "$site/flashinfer_cubin"; do
+    [ -d "$dir" ] && find "$dir" -depth -type d -empty -delete 2>/dev/null
+  done
+  return 0
+}
+
+vllm_download_kernels() {
+  local venv="$1"
+  local log_file="${2:-/dev/null}"
+  local mode="${LOCALVLLM_DOWNLOAD_KERNELS:-1}"
+  local min_free_gb="${LOCALVLLM_KERNELS_MIN_FREE_GB:-15}"
+  local avail_kb sm targets=""
+  local -a command=("$venv/bin/vllm" download-kernels) sm_args=()
+
+  vllm_kernels_enabled || return 0
+  [ -x "$venv/bin/vllm" ] || return 0
+  case "$(vllm_torch_accelerator "$venv")" in
+    "cuda "*) ;;
+    *) return 0 ;;
+  esac
+  "$venv/bin/vllm" download-kernels --help >/dev/null 2>&1 || return 0
+
+  avail_kb="$(df -Pk "$venv" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  # Kernels already installed are replaced, so their space counts as free.
+  if [[ "$avail_kb" =~ ^[0-9]+$ ]]; then
+    avail_kb=$((avail_kb + $(vllm_kernel_size_kb "$venv")))
+  fi
+  if [[ "$avail_kb" =~ ^[0-9]+$ ]] && [[ "$min_free_gb" =~ ^[0-9]+$ ]] &&
+    [ "$avail_kb" -lt $((min_free_gb * 1024 * 1024)) ]; then
+    echo "Warning: skipping precompiled vLLM kernels: less than ${min_free_gb} GB free next to $venv." >&2
+    echo "Free some space, then run: localvllm update" >&2
+    return 0
+  fi
+
+  # Kernels built for another FlashInfer version stop FlashInfer from loading,
+  # so start from none (before asking FlashInfer what it supports) rather than upgrading on top of older ones.
+  vllm_remove_kernel_packages "$venv" "$log_file"
+
+  if [ "$mode" != all ]; then
+    while IFS= read -r sm; do
+      [ -n "$sm" ] || continue
+      sm_args+=(--sm "$sm")
+      targets="${targets:+$targets }$sm"
+    done < <(vllm_gpu_sm_tags)
+    if [ "${#sm_args[@]}" -gt 0 ] &&
+      FLASHINFER_DISABLE_VERSION_CHECK=1 "$venv/bin/python" -m flashinfer download-kernels --help 2>/dev/null | grep -q -- '--sm'; then
+      command=(env FLASHINFER_DISABLE_VERSION_CHECK=1 "$venv/bin/python" -m flashinfer download-kernels "${sm_args[@]}")
+      targets=" for $targets"
+    elif FLASHINFER_DISABLE_VERSION_CHECK=1 "$venv/bin/python" -m flashinfer install-cubin-wheel --help >/dev/null 2>&1; then
+      # This FlashInfer cannot limit the JIT cache to one GPU; the cubins alone
+      # still enable FlashInfer without downloading every architecture.
+      command=(env FLASHINFER_DISABLE_VERSION_CHECK=1 "$venv/bin/python" -m flashinfer install-cubin-wheel)
+      targets=" (cubins only)"
+    else
+      targets=""
+    fi
+  fi
+  if [ "$mode" = all ]; then
+    targets=" for every GPU architecture"
+  fi
+
+  echo "Installing precompiled vLLM kernels${targets}..."
+  if ! "${command[@]}" >>"$log_file" 2>&1; then
+    echo "Warning: the precompiled vLLM kernel download failed; vLLM still works without them. Log: $log_file" >&2
+  fi
+  if ! "$venv/bin/python" -c 'import flashinfer' >/dev/null 2>&1; then
+    echo "Warning: FlashInfer did not load with the downloaded kernels; removing them." >&2
+    vllm_remove_kernel_packages "$venv" "$log_file"
+  fi
+  return 0
+}
+
+# True when vLLM offers `download-kernels` but the FlashInfer cubin package it
+# installs is missing, e.g. an environment created before that command existed.
+vllm_kernels_missing() {
+  local venv="$1"
+
+  vllm_kernels_enabled || return 1
+  [ -x "$venv/bin/python" ] || return 1
+  "$venv/bin/python" -c 'import importlib.util, sys; sys.exit(0 if importlib.util.find_spec("flashinfer_cubin") else 1)' >/dev/null 2>&1 && return 1
+  case "$(vllm_torch_accelerator "$venv")" in
+    "cuda "*) ;;
+    *) return 1 ;;
+  esac
+  "$venv/bin/vllm" download-kernels --help >/dev/null 2>&1
+}
+
 vllm_torch_accelerator() {
   local venv="$1"
 

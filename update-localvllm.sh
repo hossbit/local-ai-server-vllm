@@ -403,6 +403,9 @@ update_backend_package() {
     rm -rf "$stage_venv"
     return 1
   fi
+  # Kernels built for the old FlashInfer would not load with the new one;
+  # vllm_download_kernels fetches matching ones after the upgrade.
+  vllm_remove_kernel_packages "$stage_venv" "$pip_log"
 
   if [ "$backend" = "omni" ]; then
     log "Upgrading vLLM + vLLM-Omni for $backend in one resolver transaction"
@@ -435,6 +438,7 @@ update_backend_package() {
     rm -rf "$stage_venv"
     return 1
   fi
+  vllm_download_kernels "$stage_venv" "$pip_log"
 
   old_venv="$(vllm_venv_commit_update "$VENV_DIR" "$stage_venv")" || {
     echo "Error: could not install the new environment for backend $backend." >&2
@@ -640,6 +644,23 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     fi
   fi
 done
+
+# Environments created before vLLM shipped `download-kernels` get the kernels
+# now, even when no package changes. Installing the extra wheels does not touch
+# vLLM itself, so a running service keeps working.
+if [ "$SCRIPTS_ONLY" -eq 0 ]; then
+  for BACKEND in "${UPDATE_BACKENDS[@]}"; do
+    [ "${NEED[$BACKEND]:-none}" = none ] || continue
+    localvllm_use_backend "$BACKEND" || continue
+    localvllm_backend_installed "$BACKEND" || continue
+    vllm_kernels_missing "$VENV_DIR" || continue
+    # shellcheck disable=SC2031 # set by the sourced config, not a subshell.
+    KERNEL_LOG="$AI_DIR/$LOCALVLLM_LOGS_SUBDIR/update-packages-$BACKEND.log"
+    mkdir -p "$(dirname "$KERNEL_LOG")"
+    log "Adding precompiled kernels to backend $BACKEND"
+    vllm_download_kernels "$VENV_DIR" "$KERNEL_LOG"
+  done
+fi
 
 if [ "$SCRIPTS_CHANGE" -eq 0 ] && [ "$ANY_PACKAGE_CHANGE" -eq 0 ] && [ "$ROUTER_CHANGE" = 0 ]; then
   log "Everything is already up to date"

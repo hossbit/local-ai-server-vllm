@@ -241,6 +241,17 @@ records the resolved Python, vLLM, vLLM-Omni, and PyTorch versions, the CUDA or
 ROCm runtime that PyTorch was built for, the GPU and driver, and the requested
 version policy. `environment.lock` holds the full `pip freeze`.
 
+On CUDA, after a vLLM install or update that provides `vllm download-kernels`
+(vLLM 0.32 and newer), the installer adds FlashInfer's precompiled kernels, so
+vLLM does not disable FlashInfer when no CUDA compiler is installed. It installs
+only the kernels for the GPUs in this machine (about 7 GB per environment),
+removes kernels left from an older FlashInfer first, and removes the new ones
+again if FlashInfer then fails to load. `localvllm update` also adds them to an
+existing environment that lacks them. A failed download only prints a warning,
+and the step is skipped when less than `LOCALVLLM_KERNELS_MIN_FREE_GB` (15) GB
+are free. Set `LOCALVLLM_DOWNLOAD_KERNELS=all` for every GPU architecture, or
+`0` to skip it.
+
 Per-model tuning files in `conf/backends/<backend>/models.d/` are sourced as
 Bash. They can set shell variables and arrays such as `EXTRA_ARGS`, so only
 install or edit files you trust and keep them owned by your user.
