@@ -193,27 +193,29 @@ Sources: [vLLM documentation](https://docs.vllm.ai/),
 
 ## Common commands
 
-```bash
-localvllm                       # Show available commands
-localvllm setup                 # Guided first configuration; no service startup
-localvllm menu                  # Optional interactive management
-localvllm pull ORG/MODEL        # Download a model without switching the server
-localvllm add /path/to/model    # Register a complete existing folder
-localvllm mode                 # Show direct or automatic serving mode
-localvllm status                # Check the selected backend
-localvllm version               # Manager, engines, Python and optional router
-localvllm update                # Active backend, llama-swap and helpers
-localvllm update --all          # Every installed backend
-localvllm update --check        # Show available updates; change nothing
-localvllm rollback              # Return to the environment before the last update
-localvllm models                # List models
-localvllm start                 # Start the server
-localvllm stop                  # Stop the server
-localvllm ui --open             # Open API docs or the model dashboard
-localvllm doctor all            # Diagnose both backends
-localvllm config check          # Validate configuration without changing anything
-localvllm backend install omni  # Add vLLM-Omni later
-```
+Most users only need these:
+
+| Command | Purpose |
+| --- | --- |
+| `localvllm` | Show available commands. |
+| `localvllm setup` | Guided first configuration; does not start the service. |
+| `localvllm menu` | Optional interactive management. |
+| `localvllm pull ORG/MODEL` | Download a model without switching the server. |
+| `localvllm add /path/to/model` | Register a complete existing model folder. |
+| `localvllm use MODEL` | Select the model to serve in direct mode. |
+| `localvllm models` | List models. |
+| `localvllm mode` | Show direct or automatic serving mode. |
+| `localvllm start` | Start the server. |
+| `localvllm stop` | Stop the server. |
+| `localvllm reload` | Apply model or setting changes; restarts only if something changed. |
+| `localvllm status` | Check the selected backend. |
+| `localvllm ui --open` | Open the API docs or the model dashboard. |
+| `localvllm doctor all` | Diagnose both backends. |
+| `localvllm config check` | Validate the configuration without changing anything. |
+| `localvllm version` | Show manager, engine, Python, and router versions. |
+| `localvllm update` | Update the active backend, llama-swap, and helpers. `--all` updates every installed backend; `--check` only reports what is available. |
+| `localvllm rollback` | Return to the environment before the last update. |
+| `localvllm backend install omni` | Add vLLM-Omni later. |
 
 The default backend is `vllm`. Use `localvllm --backend omni` to target Omni.
 
