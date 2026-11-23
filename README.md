@@ -256,12 +256,8 @@ Per-model tuning files in `conf/backends/<backend>/models.d/` are sourced as
 Bash. They can set shell variables and arrays such as `EXTRA_ARGS`, so only
 install or edit files you trust and keep them owned by your user.
 
-GPU memory is left to vLLM by default: `VLLM_GPU_MEMORY_UTILIZATION` is empty,
-so vLLM 0.34 and newer size the KV cache from the memory actually free after
-warmup (older releases use their own 0.90). Set it (globally, or as
-`GPU_MEMORY_UTILIZATION` in a `models.d` file) only when the GPU is shared,
-for example by both backends at once. The Omni backend keeps 0.90 in
-`conf/backends.d/omni.conf`. Values you set explicitly are kept on update.
+GPU memory is left to vLLM by default. If a model does not fit, `localvllm start`
+prints the settings to change. See [GPU memory](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#gpu-memory).
 
 For GGUF models, consider [Local AI Server](https://github.com/hossbit/local-ai-server),
 which uses llama.cpp. [GGUF details](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM-Advanced.md#gguf-models).
