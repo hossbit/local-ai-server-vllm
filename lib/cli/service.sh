@@ -1,5 +1,51 @@
 # shellcheck shell=bash disable=SC2153,SC2154
 
+# localvllm_explain_start_failure: turn the most common vLLM start failures
+# into a concrete next step. start.sh rotates the log on every start, so the
+# current log only holds this attempt. Without this, a model that does not
+# fit (for example the default 8192-token context on a 4 GB GPU) ended in a
+# Python traceback whose actionable line was easy to miss.
+localvllm_explain_start_failure() {
+  local log="${LOG_FILE:-}" text estimate id override
+
+  [ -f "$log" ] || return 0
+  text="$(tail -n 400 "$log" 2>/dev/null)" || return 0
+  id="$(serve_env_value LOCALVLLM_ACTIVE_ID 2>/dev/null || true)"
+  if [ -n "$id" ] && [ "$id" != automatic ]; then
+    override="$(localvllm_override_file_for_id "$OVERRIDES_DIR" "$id" 2>/dev/null || true)"
+    [ -n "$override" ] || override="$OVERRIDES_DIR/$(localvllm_safe_id "$id").conf"
+  else
+    override="$OVERRIDES_DIR/<model-id>.conf"
+  fi
+
+  estimate="$(sed -nE 's/.*estimated maximum model length is ([0-9]+).*/\1/p' <<<"$text" | tail -n1)"
+  if [ -n "$estimate" ]; then
+    # Round down to a multiple of 1024 (minimum 1024) for some headroom.
+    estimate=$(( estimate / 1024 * 1024 ))
+    [ "$estimate" -ge 1024 ] || estimate=1024
+    cat >&2 <<EOF
+
+Cause: the model's context does not fit in the GPU memory left for the KV cache.
+Fix: add these lines to $override
+  MAX_MODEL_LEN=$estimate
+  MAX_NUM_SEQS=64
+then run: localvllm --backend $LOCALVLLM_BACKEND start
+For settings sized to this GPU, run: localvllm --backend $LOCALVLLM_BACKEND suggest
+EOF
+    return 0
+  fi
+
+  if grep -qiE 'CUDA out of memory|OutOfMemoryError|No available memory for the cache blocks|insufficient GPU memory' <<<"$text"; then
+    cat >&2 <<EOF
+
+Cause: the GPU ran out of memory while loading the model.
+Fix: lower MAX_MODEL_LEN and MAX_NUM_SEQS in $override,
+check for other processes using the GPU (nvidia-smi), or use a smaller or quantized model.
+For settings sized to this GPU, run: localvllm --backend $LOCALVLLM_BACKEND suggest
+EOF
+  fi
+}
+
 service_cmd_one() {
   local action="$1"
 
@@ -25,6 +71,7 @@ service_cmd_one() {
       echo "Error: $LOCALVLLM_BACKEND_LABEL started, but its API did not become ready." >&2
       echo "Details: journalctl --user -u $LOCALVLLM_SERVICE_NAME -n 30 --no-pager" >&2
       echo "Server log: $LOG_FILE" >&2
+      localvllm_explain_start_failure
       return 1
     fi
     echo "Local $LOCALVLLM_BACKEND_LABEL service $action completed."
@@ -38,6 +85,7 @@ service_cmd_one() {
       echo "Running: $BIN_DIR/start.sh $LOCALVLLM_BACKEND"
       if ! "$BIN_DIR/start.sh" "$LOCALVLLM_BACKEND"; then
         echo "Error: $LOCALVLLM_BACKEND_LABEL failed to start." >&2
+        localvllm_explain_start_failure
         return 1
       fi
       ;;

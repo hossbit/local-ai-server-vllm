@@ -68,11 +68,41 @@ localvllm_install_swap() {
   mv -f "$destination.next" "$destination"
 }
 
+# localvllm_router_prune ROOT CONFIG...: every generation writes content-hashed
+# worker scripts and a router config into ROOT, and nothing removed old ones.
+# They piled up across reloads, and old configs kept rotated or revoked API keys
+# on disk. Delete generated files that none of the given configs (or their
+# workers) reference. Only <sha256>.json/.sh names are touched.
+localvllm_router_prune() {
+  local root="$1" cfg ref file name
+  local -A keep=()
+  shift
+  for cfg in "$@"; do
+    [ -n "$cfg" ] && [ -f "$cfg" ] || continue
+    keep["${cfg##*/}"]=1
+    while IFS= read -r ref; do
+      keep["$ref"]=1
+    done < <(grep -oE '[0-9a-f]{64}\.sh' "$cfg" || true)
+  done
+  for file in "$root"/*.json "$root"/*.sh; do
+    [ -f "$file" ] || continue
+    name="${file##*/}"
+    [[ "$name" =~ ^[0-9a-f]{64}\.(json|sh)$ ]] || continue
+    [ -n "${keep[$name]+set}" ] || rm -f -- "$file"
+  done
+}
+
+# localvllm_router_env_digest ENV_FILE: the router config digest a serve.env
+# points at, or nothing (direct mode, missing file).
+localvllm_router_env_digest() {
+  sed -n 's/^LOCALVLLM_ROUTER_DIGEST=\([0-9a-f]\{64\}\)$/\1/p' "$1" 2>/dev/null | tail -n1 || true
+}
+
 localvllm_router_generate() (
   set -euo pipefail
   umask 077
   local output_sh="$1" output_env="$2" binary rebuild work root id source model format path
-  local worker hash cmd served key port config digest temp_root="" count=0
+  local worker hash cmd served key port config digest temp_root="" count=0 previous_digest="" live_digest=""
   binary="$(localvllm_swap_bin)" || { echo 'Enable automatic switching with: localvllm mode swap' >&2; return 1; }
   case "$LOCALVLLM_LISTEN_HOST" in 127.0.0.1|localhost) ;; *) echo 'Automatic switching currently requires a loopback listener; use an authenticated reverse proxy for network access.' >&2; return 1 ;; esac
   rebuild="$SCRIPT_DIR/rebuild-config.sh"
@@ -131,8 +161,17 @@ localvllm_router_generate() (
     printf 'LOCALVLLM_API_KEY_ACTIVE=%q\n' "$([ -n "$key" ] && echo 1 || echo 0)"
     echo 'LOCALVLLM_ENABLE_SLEEP=0'
   } > "$work/serve.env"
+  # The router that is running now was started from the previous generation;
+  # keep it so its workers stay launchable until the service restarts. The
+  # live serve.env is checked too, in case custom output paths were given.
+  previous_digest="$(localvllm_router_env_digest "$output_env")"
+  live_digest="$(localvllm_router_env_digest "$CONF_DIR/${LOCALVLLM_SERVE_ENV_FILE:-serve.env}")"
   install -m700 "$work/serve.sh" "$output_sh"
   install -m600 "$work/serve.env" "$output_env"
+  if [ -z "$temp_root" ]; then
+    localvllm_router_prune "$root" "$config" \
+      "${previous_digest:+$root/$previous_digest.json}" "${live_digest:+$root/$live_digest.json}"
+  fi
   echo "Automatic switching: $count models, $LOCALVLLM_BACKEND, http://$(localvllm_url_host "$LOCALVLLM_LISTEN_HOST"):$port/v1"
 )
 

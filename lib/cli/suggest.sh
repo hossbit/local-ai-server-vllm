@@ -58,7 +58,11 @@ suggest_for_model() {
     echo "  Remote models are downloaded on first start, so size-specific advice"
     echo "  is unavailable yet. Starting points:"
     echo "    TENSOR_PARALLEL_SIZE=1"
-    echo "    GPU_MEMORY_UTILIZATION=0.90"
+    if [ "$LOCALVLLM_BACKEND" = omni ]; then
+      echo "    GPU_MEMORY_UTILIZATION=0.90"
+    else
+      echo "    GPU_MEMORY_UTILIZATION unset (vLLM sizes it; set 0.90 only to share the GPU)"
+    fi
     echo "    MAX_MODEL_LEN=8192"
     echo "    MAX_NUM_SEQS=256"
     echo
@@ -76,7 +80,11 @@ suggest_for_model() {
     echo "  detected VRAM: unavailable"
     echo
     echo "  vLLM needs a supported GPU. Confirm nvidia-smi works, then rerun."
-    echo "  Conservative defaults: TP=1, GPU_MEMORY_UTILIZATION=0.90, MAX_MODEL_LEN=8192."
+    if [ "$LOCALVLLM_BACKEND" = omni ]; then
+      echo "  Conservative defaults: TP=1, GPU_MEMORY_UTILIZATION=0.90, MAX_MODEL_LEN=8192."
+    else
+      echo "  Conservative defaults: TP=1, GPU_MEMORY_UTILIZATION unset, MAX_MODEL_LEN=8192."
+    fi
     return 0
   fi
 
@@ -123,7 +131,13 @@ suggest_for_model() {
   )
 
   echo "  suggested TENSOR_PARALLEL_SIZE: $tp"
-  echo "  suggested GPU_MEMORY_UTILIZATION: $gpu_util"
+  if [ "$LOCALVLLM_BACKEND" = omni ]; then
+    echo "  suggested GPU_MEMORY_UTILIZATION: $gpu_util"
+  else
+    # vLLM 0.34+ sizes the KV cache from memory free after warmup; an explicit
+    # value turns that off, so only recommend one for sharing a GPU.
+    echo "  suggested GPU_MEMORY_UTILIZATION: unset (vLLM sizes it; set $gpu_util only to share the GPU)"
+  fi
   echo "  suggested MAX_MODEL_LEN: $max_len"
   echo "  suggested MAX_NUM_SEQS: $max_seqs"
   echo "  suggested CPU_OFFLOAD_GB: $cpu_offload"

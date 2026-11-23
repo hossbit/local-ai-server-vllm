@@ -591,8 +591,8 @@ echo "  localvllm start omni"
 echo "  localvllm status all"
 echo
 echo "Start one backend at login:"
-echo "  systemctl --user enable localvllm"
-echo "  systemctl --user enable localvllm-omni"
+echo "  systemctl --user enable ${LOCALVLLM_VLLM_SERVICE_NAME%.service}"
+echo "  systemctl --user enable ${LOCALVLLM_OMNI_SERVICE_NAME%.service}"
 echo
 echo "CLI command:"
 echo "  $LOCALVLLM_CLI_LINK"

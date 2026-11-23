@@ -1484,6 +1484,9 @@ localvllm_operation_log() {
 localvllm_log_event() (
   umask 077
   local result="$1" command_name="$2" backend="$3" root="$AI_DIR/${LOCALVLLM_LOGS_SUBDIR:-logs}" file
+  # A full uninstall removed the installation; recreating logs/ here would
+  # leave a stray folder behind.
+  [ -d "$AI_DIR/${LOCALVLLM_CONF_SUBDIR:-conf}" ] || return 0
   mkdir -p "$root" || return 0
   file="$root/manager-events.log"
   # Serialize short audit writes independently of the manager's global lock.

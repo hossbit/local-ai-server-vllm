@@ -302,7 +302,7 @@ fi
 
 validate_bool ENGINE_DEFAULTS "$ENGINE_DEFAULTS"
 validate_positive_int TENSOR_PARALLEL_SIZE "$TENSOR_PARALLEL_SIZE"
-validate_float_0_1 GPU_MEMORY_UTILIZATION "$GPU_MEMORY_UTILIZATION"
+[ -z "$GPU_MEMORY_UTILIZATION" ] || validate_float_0_1 GPU_MEMORY_UTILIZATION "$GPU_MEMORY_UTILIZATION"
 validate_optional_positive_int MAX_MODEL_LEN "$MAX_MODEL_LEN"
 validate_choice DTYPE "$DTYPE" auto half float16 bfloat16 float float32
 if [ -n "$QUANTIZATION" ]; then
@@ -427,7 +427,8 @@ VLLM_ARGS=("$VLLM_BIN" serve "$MODEL" --host "$LOCALVLLM_LISTEN_HOST" --port "$P
 VLLM_ARGS+=(--served-model-name "$SERVED_MODEL_NAME")
 if [ "$ENGINE_DEFAULTS" = "0" ]; then
   VLLM_ARGS+=(--tensor-parallel-size "$TENSOR_PARALLEL_SIZE")
-  VLLM_ARGS+=(--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
+  # Empty leaves the choice to vLLM (extensible KV cache since 0.34).
+  [ -z "$GPU_MEMORY_UTILIZATION" ] || VLLM_ARGS+=(--gpu-memory-utilization "$GPU_MEMORY_UTILIZATION")
   [ -z "$MAX_MODEL_LEN" ] || VLLM_ARGS+=(--max-model-len "$MAX_MODEL_LEN")
   [ -z "$DTYPE" ] || VLLM_ARGS+=(--dtype "$DTYPE")
   [ -z "$QUANTIZATION" ] || VLLM_ARGS+=(--quantization "$QUANTIZATION")

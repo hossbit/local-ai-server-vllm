@@ -224,17 +224,15 @@ if [ "$REMOVE_ALL" -eq 1 ]; then
 fi
 echo
 
-echo "Will keep:"
-if [ "$KEEP_VENV" -eq 1 ]; then
-  echo "  virtual environments (--keep-venv)"
+KEEP_LINES=()
+[ "$KEEP_VENV" -eq 0 ] || KEEP_LINES+=("  virtual environments (--keep-venv)")
+[ "$REMOVE_MODELS" -eq 1 ] || KEEP_LINES+=("  models: $MODELS_ROOT")
+[ "$REMOVE_HF_CACHE" -eq 1 ] || KEEP_LINES+=("  HF cache: $AI_DIR/${LOCALVLLM_HF_CACHE_SUBDIR:-hf-cache}")
+if [ "${#KEEP_LINES[@]}" -gt 0 ]; then
+  echo "Will keep:"
+  printf '%s\n' "${KEEP_LINES[@]}"
+  echo
 fi
-if [ "$REMOVE_MODELS" -eq 0 ]; then
-  echo "  models: $MODELS_ROOT"
-fi
-if [ "$REMOVE_HF_CACHE" -eq 0 ]; then
-  echo "  HF cache: $AI_DIR/${LOCALVLLM_HF_CACHE_SUBDIR:-hf-cache}"
-fi
-echo
 
 if ! confirm "Continue?"; then
   echo "Uninstall cancelled."
