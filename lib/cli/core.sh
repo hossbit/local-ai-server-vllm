@@ -4,6 +4,26 @@ usage() {
   cat <<EOF
 Usage: localvllm [--backend vllm|omni] COMMAND
 
+  start       Start the server
+  stop        Stop the server and release GPU memory
+  status      Show service, model and API state
+  models      List models
+  add         Add a model: ORG/MODEL from Hugging Face, or a local folder
+  use         Select the model to serve
+  logs        Follow the server log
+  doctor      Find problems; --chat also tests a chat reply
+  backend     List, install or choose the engine: vllm, omni
+  update      Update Local vLLM and its engine
+  help        Show this help; 'help --all' shows every command
+
+First steps: localvllm menu, or localvllm add ORG/MODEL, use ORG/MODEL, start
+EOF
+}
+
+usage_all() {
+  cat <<EOF
+Usage: localvllm [--backend vllm|omni] COMMAND
+
 Backends (isolated venv, models, port, keys, and service):
   vllm        plain vLLM for text, embeddings, and reranking
   omni        vLLM-Omni for text, image, audio, video, and action generation
@@ -16,13 +36,11 @@ Commands:
   reload [BACKEND|all]   Rescan models and restart only if launchers change
   status [--json] [BACKEND|all]
                          Show service, process, model, and API status
+  status --metrics [--watch|--raw] [BACKEND]
+                         Queue/cache/token statistics; --raw for Prometheus
   autostart [on|off|status] [BACKEND|all]
                          Start at boot and keep running after logout
-  check [--chat] [BACKEND|all]
-                         Check /health and /v1/models
   logs [BACKEND|all]     Follow logs; --list lists files; --no-follow prints recent lines
-  metrics [--watch] [BACKEND]
-                         Readable queue/cache/token statistics; --raw for Prometheus
   models [--json|--paths] List models, storage folders, and live/selected state
   use MODEL              Select the model for that backend
   load [MODEL]           Start/wake the service, optionally switching MODEL
@@ -31,30 +49,23 @@ Commands:
   suggest [MODEL]        Suggest settings from model size and hardware
   key ...                Manage API keys (create, list, revoke, rotate)
   backend ...            List/install backends, or set the default
-  doctor [--json] [BACKEND|all]
-                         Check Python, vLLM, GPU, models, ports, keys, pip
-  config check [BACKEND|all]
-                         Validate configuration without changing the launcher
+  doctor [--json] [--chat] [--config] [BACKEND|all]
+                         Check Python, vLLM, GPU, models, ports, keys, pip;
+                         --chat tests a reply, --config only validates settings
   update [--all|--check] Update selected backend, router and helpers; --all updates every backend,
                          --check only reports available updates
-  rollback [BACKEND]     Switch a backend back to the environment its last update replaced
+  update --rollback [BACKEND]
+                         Return to the environment the last update replaced
   version                Show both backends' versions and models
   uninstall              Uninstall both backends
-  menu                   Manage models and serving mode interactively
-  setup                  Guided backend, serving method and model configuration; no auto-start
-  pull ORG/MODEL         Download/register a model without changing the active one
-  add /path/to/model     Register an existing folder without copying it
+  menu                   Guided setup and model management
+  add ORG/MODEL|PATH     Download a model, or register an existing folder without
+                         copying it; --revision REF for a specific download
   remove MODEL           Remove a stopped backend model registration; preserve weights
   mode [direct|swap]     Show/change this backend's serving mode
-  help [TOPIC]           Help: paths, models, modes, keys, logs, metrics, troubleshoot
+  help [--all|TOPIC]     Help: paths, models, modes, keys, logs, metrics, troubleshoot
 
-Common workflows:
-  localvllm models                         # Your models and storage
-  localvllm pull ORG/MODEL                 # Download without interrupting serving
-  localvllm use ORG/MODEL                  # Select a direct-mode model
-  localvllm start                          # Start this backend
-  localvllm --backend omni models          # Same commands for Omni
-  localvllm menu                           # Optional interactive interface
+Older names still work: check, config check, metrics, pull, rollback, setup, switch.
 
 Need help? localvllm help paths | models | modes | keys | logs | metrics | troubleshoot
 Full guide: https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md
@@ -66,17 +77,18 @@ help_topic() {
   [ "$#" -le 1 ] || fail 'usage: localvllm help [TOPIC]'
   case "$topic" in
     '') usage ;;
+    -a|--all|all) usage_all ;;
     paths)
       cat <<EOF
 Choose a workflow — setup is optional; commands work independently.
-  localvllm setup                       Guided setup; leaves services stopped
+  localvllm menu                        Guided setup on first use; leaves services stopped
   localvllm backend list                See both engines and the default marker
   localvllm backend default omni        Persist the default used by bare commands
   localvllm --backend vllm COMMAND       Target text engine without changing the default
   localvllm --backend omni COMMAND      Target Omni without changing the default
 
-Direct/manual: install engine -> pull/add model -> use MODEL -> mode direct -> start
-Automatic: install engine -> pull/add models -> mode swap -> start
+Direct/manual: install engine -> add model -> use MODEL -> mode direct -> start
+Automatic: install engine -> add models -> mode swap -> start
 After adding models to an already running router: reload when ready (may restart it).
 Use --backend omni on every step for Omni; its model-specific deployment recipe may need tuning.
 
@@ -89,7 +101,7 @@ EOF
       cat <<EOF
 Models — use --backend omni for the separate Omni library.
   localvllm models --paths          Show your model library and shared cache
-  localvllm pull ORG/MODEL          Download/register; cached files are reused
+  localvllm add ORG/MODEL           Download/register; cached files are reused
   localvllm add /path/to/model      Register a complete model folder, without copying
   localvllm use MODEL               Select a registered model or folder for direct mode
   localvllm start                   Start the selected backend
@@ -109,7 +121,7 @@ Automatic (llama-swap): clients send the model ID in each API request.
   localvllm ui --open              Open API docs (direct) or model dashboard (swap)
 Both backends retain their own models, API keys, ports and mode.
 Changing modes or applying configuration may restart a running service.
-After pull/add, use reload to update a running router; active requests may be interrupted.
+After add, use reload to update a running router; active requests may be interrupted.
 EOF
       ;;
     keys|key) key_usage ;;
@@ -133,10 +145,10 @@ EOF
     metrics)
       cat <<EOF
 Metrics — works in direct/manual and llama-swap modes for vLLM and Omni.
-  localvllm metrics                 Queue, cache, token counters and mean first-token latency
-  localvllm metrics --watch         Refresh every 2 seconds; sampled generation speed
-  localvllm metrics omni            Inspect the Omni backend
-  localvllm metrics --raw           Native Prometheus endpoint (router metrics in swap mode)
+  localvllm status --metrics          Queue, cache, token counters and mean first-token latency
+  localvllm status --metrics --watch  Refresh every 2 seconds; sampled generation speed
+  localvllm status --metrics omni     Inspect the Omni backend
+  localvllm status --metrics --raw    Native Prometheus endpoint (router metrics in swap mode)
 No inference request is sent and no model is loaded by monitoring.
 In automatic mode, ready worker metrics are read directly over loopback.
 Missing or model-specific metrics appear as n/a; counter resets are not negative speed.
@@ -149,17 +161,16 @@ EOF
 Troubleshooting — commands work with --backend omni too.
   localvllm status                  Service and process state
   localvllm doctor all              Check both installations and dependencies
-  localvllm config check            Validate configuration without changing it
-  localvllm check                   Health and available API models
-  localvllm check --chat            Send a small chat request (may load a model)
+  localvllm doctor --config         Validate configuration without changing it
+  localvllm doctor --chat           Send a small chat request (may load a model)
   localvllm logs --no-follow        Recent engine/router errors
   localvllm logs --service --no-follow  Startup and systemd errors
   localvllm update --scripts-only   Refresh manager helpers
   localvllm update                  Update this backend, router and helpers
   localvllm update --all            Update every installed backend
   localvllm update --check          Show available updates without changing anything
-  localvllm rollback                Return this backend to the environment before its last update
-No model? Use models, pull ORG/MODEL, then use MODEL and start.
+  localvllm update --rollback       Return this backend to the environment before its last update
+No model? Use models, add ORG/MODEL, then use MODEL and start.
 Memory error? Choose a smaller model/context or review help models and suggest MODEL.
 For ARM64, ROCm and Fedora/RHEL, consult the platform guide before selecting wheels:
 https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#platform-notes
@@ -568,19 +579,32 @@ doctor_json_cmd() {
 }
 
 doctor_cmd() {
-  local selector original_backend name json=0 selector_arg="" arg
+  local selector original_backend name json=0 chat=0 config=0 status=0 selector_arg="" arg
 
   for arg in "$@"; do
     case "$arg" in
       --json) json=1 ;;
+      --chat) chat=1 ;;
+      --config) config=1 ;;
       all|vllm|omni|text|llm|vllm-omni|vllm_omni|omni-vllm) selector_arg="$arg" ;;
-      *) fail "usage: localvllm doctor [--json] [BACKEND|all]" ;;
+      *) fail "usage: localvllm doctor [--json] [--chat] [--config] [BACKEND|all]" ;;
     esac
   done
+  if [ "$json" -eq 1 ] && [ $((chat + config)) -gt 0 ]; then
+    fail 'doctor --json cannot be combined with --chat or --config'
+  fi
   selector="$(localvllm_resolve_selector "$selector_arg")" || return 1
   if [ "$json" -eq 1 ]; then
     doctor_json_cmd "$selector"
     return
+  fi
+  # --config alone is `config check`; with --chat both run. Subshells, because
+  # these commands may exit and must not skip the remaining checks.
+  if [ "$config" -eq 1 ]; then
+    (config_check_cmd "$selector") || status=1
+    [ "$chat" -eq 1 ] || return "$status"
+    (check_cmd --chat "$selector") || status=1
+    return "$status"
   fi
   original_backend="$LOCALVLLM_BACKEND"
   DOCTOR_ERRORS=0
@@ -603,10 +627,15 @@ doctor_cmd() {
   echo
   if [ "$DOCTOR_ERRORS" -gt 0 ]; then
     echo "$DOCTOR_ERRORS error(s), $DOCTOR_WARNINGS warning(s)."
-    return 1
+    status=1
+  else
+    echo "No errors, $DOCTOR_WARNINGS warning(s)."
   fi
-  echo "No errors, $DOCTOR_WARNINGS warning(s)."
-  return 0
+  if [ "$chat" -eq 1 ]; then
+    echo
+    (check_cmd --chat "$selector") || status=1
+  fi
+  return "$status"
 }
 
 config_usage() {

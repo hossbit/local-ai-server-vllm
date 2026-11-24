@@ -88,7 +88,7 @@ VLLM_OMNI_VERSION on the same release line as VLLM_VERSION.
 
 If a restarted service does not become ready, everything is restored. After
 a successful package update the replaced environment is kept for
-'localvllm rollback' (set LOCALVLLM_KEEP_PREVIOUS=0 to delete it instead).
+'localvllm update --rollback' (set LOCALVLLM_KEEP_PREVIOUS=0 to delete it instead).
 EOF
 }
 
@@ -817,7 +817,7 @@ fi
 commit_staged_helpers
 TRANSACTION_READY=0
 # The services work with the new environments. Keep each replaced one (with
-# the record still in CONF_DIR that describes it) for `localvllm rollback`,
+# the record still in CONF_DIR that describes it) for `localvllm update --rollback`,
 # then record the new environment.
 for BACKEND in "${UPDATE_BACKENDS[@]}"; do
   [ -n "${OLD_VENVS[$BACKEND]:-}" ] || continue
@@ -827,7 +827,7 @@ for BACKEND in "${UPDATE_BACKENDS[@]}"; do
     warn "could not keep the previous $BACKEND environment for rollback"
     vllm_venv_finish_update "${OLD_VENVS[$BACKEND]}"
   elif vllm_venv_has_previous "$VENV_DIR"; then
-    echo "Previous $BACKEND environment kept for 'localvllm rollback $BACKEND'."
+    echo "Previous $BACKEND environment kept for 'localvllm update --rollback $BACKEND'."
   fi
   OLD_VENVS["$BACKEND"]=""
 done

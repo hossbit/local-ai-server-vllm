@@ -187,6 +187,7 @@ case "$COMMAND" in
     help_topic "$@"
     ;;
   *)
+    echo "Unknown command: $COMMAND" >&2
     usage >&2
     exit 2
     ;;

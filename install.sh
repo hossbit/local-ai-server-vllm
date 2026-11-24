@@ -8,7 +8,7 @@ LOCALVLLM_LATEST_API="${LOCALVLLM_LATEST_API:-https://api.github.com/repos/hossb
 # GitHub API cannot be reached (offline mirror, rate limit) the release this
 # script shipped with is used. Override LOCALVLLM_REF to test another tag/branch.
 LOCALVLLM_REF="${LOCALVLLM_REF:-latest}"
-LOCALVLLM_FALLBACK_REF="${LOCALVLLM_FALLBACK_REF:-v1.5.0}"
+LOCALVLLM_FALLBACK_REF="${LOCALVLLM_FALLBACK_REF:-v1.6.0}"
 
 log() {
   printf 'localvllm-install: %s\n' "$*"

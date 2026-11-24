@@ -57,8 +57,14 @@ PY
 
 add_cmd() {
   local path id
-  [ "$#" = 1 ] || fail 'usage: localvllm add /path/to/model'
+  [ "$#" -ge 1 ] || fail 'usage: localvllm add ORG/MODEL [--revision REF] | localvllm add /path/to/model'
   path="$(expand_path "$1")"
+  # An existing local path always wins over a Hugging Face name.
+  if [ ! -e "$path" ] && [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+    pull_cmd "$@"
+    return
+  fi
+  [ "$#" = 1 ] || fail 'usage: localvllm add /path/to/model'
   if [ ! -d "$path" ] || ! { [ -f "$path/config.json" ] || [ -f "$path/model_index.json" ]; }; then
     fail 'choose a complete model folder containing config.json (or model_index.json) and all model components'
   fi
@@ -290,9 +296,37 @@ setup_cmd() {
 menu_cmd() {
   [ "$#" = 0 ] || fail 'usage: localvllm menu'
   if [ ! -t 0 ] || [ ! -t 1 ]; then
-    fail "menu needs an interactive terminal; scripts can use 'localvllm pull', 'add', 'use', 'start', and 'mode'"
+    fail "menu needs an interactive terminal; scripts can use 'localvllm add', 'use', 'start', and 'mode'"
+  fi
+  if ! menu_configured; then
+    menu_offer_setup
+    return
   fi
   menu_loop
+}
+
+# menu_configured: true when any installed backend has a registered model.
+menu_configured() {
+  local original="$LOCALVLLM_BACKEND" name found=1
+  while IFS= read -r name; do
+    localvllm_use_backend "$name" || continue
+    if localvllm_backend_installed "$name" && localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR"; then
+      found=0
+      break
+    fi
+  done < <(localvllm_backend_list)
+  localvllm_use_backend "$original" >/dev/null 2>&1 || true
+  return "$found"
+}
+
+menu_offer_setup() {
+  local answer
+  printf 'No engine with a model is set up yet. Run the guided setup? [Y/n]: '
+  read -r answer || return 1
+  case "${answer,,}" in
+    ''|y|yes) setup_flow ;;
+    *) menu_loop ;;
+  esac
 }
 
 # Estimates describe unquantized weight storage, not total inference memory.
@@ -309,7 +343,7 @@ model_examples() {
     echo 'https://huggingface.co/Qwen/Qwen3-0.6B'
   fi
   echo 'Inference needs additional memory for caches and runtime; context and concurrency increase it.'
-  echo "Download: localvllm --backend $LOCALVLLM_BACKEND pull ORG/MODEL"
+  echo "Download: localvllm --backend $LOCALVLLM_BACKEND add ORG/MODEL"
   echo 'Custom Hugging Face IDs and existing model folders are also supported.'
 }
 

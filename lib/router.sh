@@ -184,7 +184,7 @@ mode_cmd() {
   [ "$wanted" != "$previous" ] || { echo "Already using $wanted mode."; return 0; }
   if [ "$wanted" = swap ]; then
     case "$LOCALVLLM_LISTEN_HOST" in 127.0.0.1|localhost) ;; *) echo 'Automatic switching requires a loopback listener; the current service was not changed.' >&2; return 1 ;; esac
-    localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR" || fail 'Add a model first with localvllm pull ORG/MODEL or localvllm add /path/to/model'
+    localvllm_has_model_entries "$MODELS_DIR" "$OVERRIDES_DIR" || fail 'Add a model first with localvllm add ORG/MODEL or localvllm add /path/to/model'
     localvllm_install_swap || return 1
   else
     localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" || return 1

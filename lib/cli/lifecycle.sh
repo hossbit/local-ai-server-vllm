@@ -149,6 +149,12 @@ update_cmd() {
   local updater="$BIN_DIR/update-localvllm.sh" arg all=0
   local -a args=("$@")
 
+  if [ "${1:-}" = "--rollback" ]; then
+    shift
+    rollback_cmd "$@"
+    return
+  fi
+
   [ -x "$updater" ] || updater="$SCRIPT_DIR/update-localvllm.sh"
   [ -x "$updater" ] || fail "missing updater: $BIN_DIR/update-localvllm.sh"
 
@@ -226,7 +232,7 @@ version_one() {
     echo "Python: virtual environment missing"
   fi
   if vllm_venv_has_previous "$VENV_DIR"; then
-    echo "Rollback: available ('localvllm rollback $LOCALVLLM_BACKEND')"
+    echo "Rollback: available ('localvllm update --rollback $LOCALVLLM_BACKEND')"
   fi
 
   if localvllm_resolve_active "$MODELS_DIR" "$ACTIVE_MODEL_FILE" "$OVERRIDES_DIR" 2>/dev/null; then
@@ -293,10 +299,10 @@ rollback_activate() {
 rollback_cmd() {
   local selector was_active=0 previous
 
-  [ "$#" -le 1 ] || fail "usage: localvllm rollback [BACKEND]"
+  [ "$#" -le 1 ] || fail "usage: localvllm update --rollback [BACKEND]"
   if [ "$#" -eq 1 ]; then
     selector="$(localvllm_resolve_selector "$1")" || return 1
-    [ "$selector" != "all" ] || fail "roll back one backend at a time: localvllm rollback vllm|omni"
+    [ "$selector" != "all" ] || fail "roll back one backend at a time: localvllm update --rollback vllm|omni"
     localvllm_use_backend "$selector" || return 1
   fi
 
@@ -327,13 +333,13 @@ One is kept after each successful 'localvllm update' that changed packages
     echo "Error: the restored environment did not work; switching back." >&2
     localvllm_stop_service >/dev/null 2>&1 || true
     vllm_venv_swap_previous "$VENV_DIR" "$CONF_DIR" ||
-      fail "could not switch back automatically; run 'localvllm rollback $LOCALVLLM_BACKEND' again"
+      fail "could not switch back automatically; run 'localvllm update --rollback $LOCALVLLM_BACKEND' again"
     rollback_activate "$was_active" || true
     fail "rollback failed; the environment that was active before is in use again"
   fi
 
   echo "Rolled back $LOCALVLLM_BACKEND to $(rollback_describe "$VENV_DIR")."
-  echo "Run 'localvllm rollback $LOCALVLLM_BACKEND' again to return to the newer environment."
+  echo "Run 'localvllm update --rollback $LOCALVLLM_BACKEND' again to return to the newer environment."
 }
 
 uninstall_cmd() {

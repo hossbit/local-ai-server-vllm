@@ -81,15 +81,15 @@ open a new terminal and run:
 localvllm
 ```
 
-`localvllm` shows commands. For a guided first setup, run **`localvllm setup`**;
-for later interactive management, use `localvllm menu`. Neither is required.
+`localvllm` shows commands. For a guided first setup, run **`localvllm menu`**,
+which offers the setup while nothing is configured. It is optional.
 
 ### Choose your path
 
 ```mermaid
 flowchart TD
     A(["🐧 Install Local vLLM"]) --> B{"Choose your setup path"}
-    B --> C["🧭 Guided setup<br/>localvllm setup"]
+    B --> C["🧭 Guided setup<br/>localvllm menu"]
     B --> D["🛠️ Independent commands"]
     C --> E["Choose your engine<br/><b>vLLM · Omni</b>"]
     D --> E
@@ -125,8 +125,8 @@ and swap modes. Select models compatible with the chosen engine and your GPU.
 
 | Independent path | Steps after installation |
 | --- | --- |
-| **Direct/manual (default)** | `pull ORG/MODEL` or `add /path/to/model` → `use MODEL` → `mode direct` → `start` |
-| **Automatic switching** | `pull ORG/MODEL` or `add /path/to/model` → `mode swap` → `start` |
+| **Direct/manual (default)** | `add ORG/MODEL` or `add /path/to/model` → `use MODEL` → `mode direct` → `start` |
+| **Automatic switching** | `add ORG/MODEL` or `add /path/to/model` → `mode swap` → `start` |
 
 Prefix every step with `localvllm --backend vllm` or `localvllm --backend omni`.
 For Omni, install its engine first with `localvllm backend install omni`.
@@ -211,9 +211,8 @@ Most users only need these:
 | Command | Purpose |
 | --- | --- |
 | `localvllm` | Show available commands. |
-| `localvllm setup` | Guided first configuration; does not start the service. |
-| `localvllm menu` | Optional interactive management. |
-| `localvllm pull ORG/MODEL` | Download a model without switching the server. |
+| `localvllm menu` | Guided first setup, then interactive management. |
+| `localvllm add ORG/MODEL` | Download a model without switching the server. |
 | `localvllm add /path/to/model` | Register a complete existing model folder. |
 | `localvllm use MODEL` | Select the model to serve in direct mode. |
 | `localvllm models` | List models. |
@@ -225,11 +224,15 @@ Most users only need these:
 | `localvllm autostart on` | Start at boot and keep running after logout (`off`, `status`; add `vllm`, `omni` or `all`). |
 | `localvllm ui --open` | Open the API docs or the model dashboard. |
 | `localvllm doctor all` | Diagnose both backends. |
-| `localvllm config check` | Validate the configuration without changing anything. |
+| `localvllm doctor --config` | Validate the configuration without changing anything. |
 | `localvllm version` | Show manager, engine, Python, and router versions. |
 | `localvllm update` | Update the active backend, llama-swap, and helpers. `--all` updates every installed backend; `--check` only reports what is available. |
-| `localvllm rollback` | Return to the environment before the last update. |
+| `localvllm update --rollback` | Return to the environment before the last update. |
 | `localvllm backend install omni` | Add vLLM-Omni later. |
+
+`localvllm help` shows the common commands and `localvllm help --all` shows every
+one. Older names (`check`, `config check`, `metrics`, `pull`, `rollback`, `setup`,
+`switch`) still work.
 
 The default backend is `vllm`. Use `localvllm --backend omni` to target Omni.
 
@@ -249,7 +252,7 @@ you pin `VLLM_VERSION` or `VLLM_OMNI_VERSION`. Each backend is updated in its
 own staged copy, verified (import, `pip check`), and only then promoted; if a
 restarted service does not become ready, everything is restored. After a
 successful update the replaced environment is kept as `<venv>.previous`, so
-`localvllm rollback vllm` (or `omni`) can switch back, and running it again
+`localvllm update --rollback vllm` (or `omni`) can switch back, and running it again
 returns to the newer one. Only one previous environment is kept per backend.
 It uses the disk space of a full venv; set `LOCALVLLM_KEEP_PREVIOUS=0` to
 delete it after each successful update. `conf/backends/<backend>/environment.txt`
@@ -293,7 +296,7 @@ localvllm help                     # Commands and common workflows
 localvllm help models              # Also: modes, keys, logs, metrics, troubleshoot
 localvllm logs --list              # All log files in one place
 localvllm logs all --no-follow     # Recent output from all current files
-localvllm metrics --watch          # Readable queue, cache and token statistics
+localvllm status --metrics --watch # Readable queue, cache and token statistics
 ```
 
 Logs live in `~/ai-vllm/logs/` by default (`localvllm logs --path` shows your

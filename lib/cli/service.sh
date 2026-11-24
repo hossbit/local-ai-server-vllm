@@ -135,6 +135,13 @@ service_cmd() {
 status_cmd() {
   local selector original_backend name json=0 selector_arg="" arg
   local tmp
+  local -a rest=()
+
+  for arg in "$@"; do [ "$arg" = --metrics ] || rest+=("$arg"); done
+  if [ "${#rest[@]}" -ne "$#" ]; then
+    metrics_cmd "${rest[@]}"
+    return
+  fi
 
   for arg in "$@"; do
     case "$arg" in
