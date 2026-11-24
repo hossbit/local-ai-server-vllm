@@ -16,6 +16,8 @@ Commands:
   reload [BACKEND|all]   Rescan models and restart only if launchers change
   status [--json] [BACKEND|all]
                          Show service, process, model, and API status
+  autostart [on|off|status] [BACKEND|all]
+                         Start at boot and keep running after logout
   check [--chat] [BACKEND|all]
                          Check /health and /v1/models
   logs [BACKEND|all]     Follow logs; --list lists files; --no-follow prints recent lines

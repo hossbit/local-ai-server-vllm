@@ -1476,9 +1476,31 @@ localvllm_operation_log() {
   localvllm_rotate_log "$file" || return 1
   (umask 077; : > "$file") || return 1
   chmod 600 "$file"
+  # Keep the real stdout/stderr so localvllm_operation_log_close can hand them
+  # back and let tee drain before the process exits.
+  exec {LOCALVLLM_LOG_SAVED_OUT}>&1 {LOCALVLLM_LOG_SAVED_ERR}>&2
   # tee must not retain the manager lock; updates/installers hold FD 9.
-  exec > >(tee -a "$file" 9>&-) 2>&1
+  exec > >(tee -a "$file" 9>&- {LOCALVLLM_LOG_SAVED_OUT}>&- {LOCALVLLM_LOG_SAVED_ERR}>&-) 2>&1
+  LOCALVLLM_LOG_TEE_PID=$!
+  [ -n "$(trap -p EXIT)" ] || trap localvllm_operation_log_close EXIT
   printf '\n[%s] %s started\n' "$(date -u +%FT%TZ)" "$kind"
+}
+
+# localvllm_operation_log_close: flush the operation log before exiting.
+# Without it the script can exit while tee still holds the last lines (the
+# error message, usually); when the terminal or SSH session closes right
+# after, those lines never appear. Restoring stdout/stderr gives tee EOF;
+# waiting is bounded in case a background child still holds the pipe.
+localvllm_operation_log_close() {
+  local pid="${LOCALVLLM_LOG_TEE_PID:-}" tries=0
+  [ -n "$pid" ] || return 0
+  LOCALVLLM_LOG_TEE_PID=""
+  exec 1>&"$LOCALVLLM_LOG_SAVED_OUT" 2>&"$LOCALVLLM_LOG_SAVED_ERR"
+  while kill -0 "$pid" 2>/dev/null && [ "$tries" -lt 50 ]; do
+    sleep 0.1
+    tries=$((tries + 1))
+  done
+  return 0
 }
 
 localvllm_log_event() (

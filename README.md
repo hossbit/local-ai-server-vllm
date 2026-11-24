@@ -72,7 +72,10 @@ curl -fsSL https://hossbit.github.io/localvllm/install.sh | bash
 
 The installer sets up the text engine automatically. If a compatible Python is
 missing, it also downloads an isolated Python 3.12 without changing your system
-Python. Installation may request sudo and needs internet and disk space. Then open a new terminal and run:
+Python. Installation may request sudo and needs internet and about 20 GB of
+free disk space per engine; it stops early when there is less. Minimal server
+images without `git` or `tar` are fine: the installer adds `tar` itself. Then
+open a new terminal and run:
 
 ```bash
 localvllm
@@ -143,6 +146,16 @@ See `localvllm help paths` or the [workflow guide](https://github.com/hossbit/co
 Already installed and Omni reports a Python error? Run `localvllm update
 --scripts-only`, then retry `localvllm backend install omni`.
 
+Running Local vLLM on a server you reach over SSH? Turn on autostart so the
+service starts at boot and keeps running after you log out:
+
+```bash
+localvllm autostart on vllm
+```
+
+No GPU? vLLM needs a CPU build of its own, so the installer stops instead of
+downloading the CUDA packages. For GGUF models on the CPU, use
+[Local AI Server](https://github.com/hossbit/local-ai-server).
 For AMD, CPU, ARM64, or advanced setups, see the [installation guide](https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation).
 
 ## Why Local AI Server for vLLM?
@@ -209,6 +222,7 @@ Most users only need these:
 | `localvllm stop` | Stop the server. |
 | `localvllm reload` | Apply model or setting changes; restarts only if something changed. |
 | `localvllm status` | Check the selected backend. |
+| `localvllm autostart on` | Start at boot and keep running after logout (`off`, `status`; add `vllm`, `omni` or `all`). |
 | `localvllm ui --open` | Open the API docs or the model dashboard. |
 | `localvllm doctor all` | Diagnose both backends. |
 | `localvllm config check` | Validate the configuration without changing anything. |
@@ -241,7 +255,9 @@ It uses the disk space of a full venv; set `LOCALVLLM_KEEP_PREVIOUS=0` to
 delete it after each successful update. `conf/backends/<backend>/environment.txt`
 records the resolved Python, vLLM, vLLM-Omni, and PyTorch versions, the CUDA or
 ROCm runtime that PyTorch was built for, the GPU and driver, and the requested
-version policy. `environment.lock` holds the full `pip freeze`.
+version policy. `environment.lock` holds the full `pip freeze`. pip's download
+cache is not kept, which saves several GB in `~/.cache/pip`; set
+`LOCALVLLM_PIP_CACHE=1` to keep it.
 
 On CUDA, after a vLLM install or update that provides `vllm download-kernels`
 (vLLM 0.32 and newer), the installer adds FlashInfer's precompiled kernels, so

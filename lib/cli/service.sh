@@ -247,6 +247,97 @@ status_json_one() {
     }'
 }
 
+# user_lingers: true when systemd keeps this user's services running without
+# a login session (loginctl enable-linger). Without it a user service stops at
+# logout and never starts at boot, which matters on headless/SSH servers.
+user_lingers() {
+  [ "$(loginctl show-user "$(id -un)" -p Linger --value 2>/dev/null)" = "yes" ] ||
+    [ -e "/var/lib/systemd/linger/$(id -un)" ]
+}
+
+enable_user_linger() {
+  local user
+  user="$(id -un)"
+  user_lingers && return 0
+  # polkit usually lets a user enable lingering for themselves; fall back to
+  # sudo (prompting if needed) when it does not, e.g. over SSH.
+  loginctl enable-linger "$user" 2>/dev/null && return 0
+  if [ "$(id -u)" -ne 0 ] && command -v sudo >/dev/null 2>&1; then
+    echo "Enabling lingering for $user needs administrator rights:"
+    sudo loginctl enable-linger "$user" && return 0
+  fi
+  fail "could not enable lingering. Ask an administrator to run: sudo loginctl enable-linger $user"
+}
+
+autostart_one() {
+  local action="$1"
+  has_user_service || { echo "$LOCALVLLM_BACKEND: no systemd user service installed"; return 1; }
+  case "$action" in
+    on)
+      systemctl --user enable "$SERVICE_UNIT" >/dev/null || fail "could not enable $SERVICE_UNIT"
+      echo "$LOCALVLLM_BACKEND: starts at boot ($SERVICE_UNIT)"
+      ;;
+    off)
+      systemctl --user disable "$SERVICE_UNIT" >/dev/null || fail "could not disable $SERVICE_UNIT"
+      echo "$LOCALVLLM_BACKEND: no longer starts at boot"
+      ;;
+    status)
+      if systemctl --user is-enabled --quiet "$SERVICE_UNIT" 2>/dev/null; then
+        echo "$LOCALVLLM_BACKEND: enabled ($SERVICE_UNIT)"
+      else
+        echo "$LOCALVLLM_BACKEND: not enabled"
+      fi
+      ;;
+  esac
+}
+
+# localvllm autostart [on|off|status] [BACKEND|all]: start the selected
+# services at boot and keep them running after logout (systemd lingering).
+autostart_cmd() {
+  local action="status" selector_arg="" selector original_backend name status=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      on|off|status) action="$arg" ;;
+      all|vllm|omni) selector_arg="$arg" ;;
+      *) fail "usage: localvllm autostart [on|off|status] [BACKEND|all]" ;;
+    esac
+  done
+  selector="$(localvllm_resolve_selector "$selector_arg")" || return 1
+  original_backend="$LOCALVLLM_BACKEND"
+
+  if [ "$selector" = "all" ]; then
+    while IFS= read -r name; do
+      localvllm_use_backend "$name" || continue
+      autostart_one "$action" || status=1
+    done < <(localvllm_backend_list)
+    localvllm_use_backend "$original_backend" >/dev/null 2>&1 || true
+  else
+    localvllm_use_backend "$selector" || return 1
+    autostart_one "$action" || status=1
+  fi
+
+  case "$action" in
+    on)
+      enable_user_linger
+      echo "Enabled services keep running after you log out."
+      ;;
+    off)
+      if user_lingers; then
+        echo "Lingering stays on for $(id -un) because other user services may rely on it."
+        echo "To turn it off as well: loginctl disable-linger $(id -un)"
+      fi
+      ;;
+    status)
+      if user_lingers; then
+        echo "Lingering: yes (enabled services start at boot and survive logout)"
+      else
+        echo "Lingering: no (services stop when you log out). Run 'localvllm autostart on' to change that."
+      fi
+      ;;
+  esac
+  return "$status"
+}
+
 status_cmd_one() {
   local version
 
@@ -255,6 +346,9 @@ status_cmd_one() {
     echo "Systemd service:"
     systemctl --user status "$SERVICE_UNIT" --no-pager || true
     echo
+    if ! user_lingers; then
+      echo "Note: this service stops when you log out and does not start at boot. Run 'localvllm autostart on' to change that."
+    fi
     echo "Note: this is a Type=simple service, so systemd reports the real vLLM process state."
   else
     print_service_details "helper script"

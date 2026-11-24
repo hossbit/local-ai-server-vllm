@@ -46,6 +46,8 @@ append_runtime_tuning() {
     LOCALVLLM_HEALTH_CHECK_TIMEOUT
     LOCALVLLM_STOP_TIMEOUT
     LOCALVLLM_LOG_KEEP
+    LOCALVLLM_INSTALL_MIN_FREE_GB
+    LOCALVLLM_PIP_CACHE
     LOCALVLLM_ALLOW_INSECURE_PUBLIC
     LOCALVLLM_REQUIRE_API_KEY
     LOCALVLLM_MODELS_OVERRIDE_SUBDIR
@@ -373,7 +375,11 @@ vllm_device_hint() {
       printf '%s' "AMD ROCm (ROCm runtime detected). ROCm vLLM may need a ROCm-specific wheel/index; see VLLM_PIP_ARGS."
       ;;
     cpu)
-      printf '%s' "CPU only. vLLM CPU is slow and may require a source build; set VLLM_ALLOW_CPU=1 to try it."
+      if [ "${VLLM_ALLOW_CPU:-0}" = "1" ]; then
+        printf '%s' "CPU only (VLLM_ALLOW_CPU=1). vLLM on the CPU is slow and needs a CPU build of vLLM."
+      else
+        printf '%s' "CPU only. vLLM CPU is slow and may require a source build; set VLLM_ALLOW_CPU=1 to try it."
+      fi
       ;;
     *)
       printf '%s' "$1"
@@ -473,6 +479,42 @@ vllm_venv_create() {
     echo "Install the venv package for your Python (for example python3-venv) and retry." >&2
     return 1
   }
+}
+
+# installer_rerun_command [ENV]: the command a user should run to retry the
+# install with optional ENV assignments. Under `curl ... | bash` the installer
+# runs from a temporary checkout the bootstrap deletes on exit, so its own path
+# ($0) would be useless advice; the bootstrap sets LOCALVLLM_BOOTSTRAP=1.
+installer_rerun_command() {
+  local env="${1:-}"
+  if [ "${LOCALVLLM_BOOTSTRAP:-0}" = "1" ]; then
+    printf 'curl -fsSL %s | %sbash\n' "${LOCALVLLM_BOOTSTRAP_URL:-https://hossbit.github.io/localvllm/install.sh}" "${env:+$env }"
+  else
+    printf '%s%s\n' "${env:+$env }" "$0"
+  fi
+}
+
+# vllm_install_space_required DIR: a new environment holds PyTorch, vLLM and
+# the CUDA libraries (about 15-17 GB with FlashInfer kernels). Refuse early
+# instead of failing with "No space left on device" halfway through pip.
+# LOCALVLLM_INSTALL_MIN_FREE_GB=0 turns the check off.
+vllm_install_space_required() {
+  local dir="$1"
+  local min_gb="${LOCALVLLM_INSTALL_MIN_FREE_GB:-20}" available required
+
+  [[ "$min_gb" =~ ^[0-9]+$ ]] && [ "$min_gb" -gt 0 ] || return 0
+  while [ ! -d "$dir" ] && [ "$dir" != "/" ]; do dir="$(dirname "$dir")"; done
+  available="$(df -PB1 "$dir" 2>/dev/null | awk 'NR == 2 { print $4 }')"
+  [[ "$available" =~ ^[0-9]+$ ]] || return 0
+  required=$((min_gb * 1024 * 1024 * 1024))
+  if [ "$available" -lt "$required" ]; then
+    echo "Error: not enough free disk space for a new vLLM environment in $dir." >&2
+    echo "It needs about $(format_bytes_human "$required") free; $(format_bytes_human "$available") is available." >&2
+    echo "Free space or choose another install location (LOCALVLLM_DIR=/path/with/space)." >&2
+    echo "To try anyway, set LOCALVLLM_INSTALL_MIN_FREE_GB=0." >&2
+    return 1
+  fi
+  return 0
 }
 
 vllm_venv_update_space_required() {
@@ -638,9 +680,19 @@ vllm_venv_swap_previous() {
   return 0
 }
 
+# vllm_pip_cache_env: keep pip from filling its download cache unless
+# LOCALVLLM_PIP_CACHE=1. The wheels are several GB (PyTorch, CUDA libraries)
+# and the cache would otherwise stay in ~/.cache/pip after every install and
+# update. A PIP_NO_CACHE_DIR the user already exported wins.
+vllm_pip_cache_env() {
+  [ "${LOCALVLLM_PIP_CACHE:-0}" = "1" ] || export PIP_NO_CACHE_DIR="${PIP_NO_CACHE_DIR:-1}"
+}
+
 vllm_bootstrap_pip() {
   local venv="$1"
   local log_file="${2:-}"
+
+  vllm_pip_cache_env
 
   if [ -n "$log_file" ]; then
     mkdir -p "$(dirname "$log_file")"
@@ -674,6 +726,7 @@ vllm_pip_install() {
   local python="$venv/bin/python"
   local -a pip_extra=()
   local -a command=("$python" -m pip install --upgrade)
+  vllm_pip_cache_env
 
   if [ ! -x "$python" ]; then
     echo "Error: Python is missing from $venv." >&2
@@ -718,6 +771,7 @@ vllm_pip_install_both() {
   local -a vllm_extra=()
   local -a omni_extra=()
   local -a command=("$python" -m pip install --upgrade)
+  vllm_pip_cache_env
 
   if [ ! -x "$python" ]; then
     echo "Error: Python is missing from $venv." >&2
@@ -806,6 +860,7 @@ vllm_omni_pip_install() {
   local python="$venv/bin/python"
   local -a pip_extra=()
   local -a command=("$python" -m pip install --upgrade)
+  vllm_pip_cache_env
   local spec
 
   if [ ! -x "$python" ]; then

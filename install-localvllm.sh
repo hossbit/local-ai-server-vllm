@@ -307,6 +307,10 @@ install_backend() {
     fi
   elif [ -e "$VENV_DIR" ]; then
     log "The existing environment is incomplete; preparing a replacement"
+    vllm_install_space_required "$VENV_DIR" || {
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+      return 1
+    }
     LOCALVLLM_PYTHON="$(localvllm_find_compatible_python "$name")" || {
       if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
       return 1
@@ -321,6 +325,10 @@ install_backend() {
       return 1
     }
   else
+    vllm_install_space_required "$VENV_DIR" || {
+      if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
+      return 1
+    }
     LOCALVLLM_PYTHON="$(localvllm_find_compatible_python "$name")" || {
       if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
       return 1
@@ -348,10 +356,12 @@ install_backend() {
   if [ "$install_status" -ne 0 ]; then
     if [ "$target_venv" != "$VENV_DIR" ]; then
       rm -rf "$target_venv"
+      echo "Error: installation failed for backend $name; the previous environment was left intact." >&2
     else
       rm -rf "$VENV_DIR"
+      echo "Error: installation failed for backend $name; the partial environment was removed." >&2
     fi
-    echo "Error: installation failed for backend $name; the previous environment was left intact." >&2
+    echo "Details: $pip_log" >&2
     if [ "$was_running" -eq 1 ]; then localvllm_start_service || true; fi
     return 1
   fi
@@ -437,10 +447,14 @@ TARGET_DEVICE="$(vllm_detect_target_device)"
 if [ "$TARGET_DEVICE" = "cpu" ] && [ "${VLLM_ALLOW_CPU:-0}" != "1" ]; then
   fail "no supported GPU detected.
 
-vLLM is primarily a GPU server. If you really want to try CPU inference:
-  VLLM_ALLOW_CPU=1 $0 --skip-system
+vLLM is a GPU server: install an NVIDIA driver (nvidia-smi must work), then rerun:
+  $(installer_rerun_command)
 
-Or install an NVIDIA driver, then rerun."
+For a machine without a GPU, Local AI Server (llama.cpp) runs GGUF models on the CPU:
+  curl -fsSL https://hossbit.github.io/localai/install.sh | bash
+
+To try vLLM on the CPU anyway, it needs a CPU build of vLLM:
+  https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation"
 fi
 case "$TARGET_DEVICE" in
   cpu|rocm)
@@ -464,9 +478,17 @@ choose a vLLM version and wheel index for your GPU and ROCm stack:
     fi
     ;;
   cpu)
+    # The default PyPI wheel is the CUDA build: several GB of NVIDIA
+    # libraries that cannot run here. Refuse it, like ROCm above.
     if [ -z "${VLLM_PIP_ARGS:-}" ]; then
-      echo "Warning: CPU installs need a compatible CPU wheel or upstream source build." >&2
-      echo "See https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation" >&2
+      fail "CPU install requested, but no CPU build of vLLM was selected.
+
+The default PyPI vLLM wheel is built for NVIDIA CUDA and does not run on a CPU.
+Choose a CPU wheel or source build with VLLM_PIP_ARGS, then rerun:
+  $(installer_rerun_command "VLLM_ALLOW_CPU=1 VLLM_PIP_ARGS='...'")
+
+Setup guide:
+  https://github.com/hossbit/comai-linux-assistant-wiki/blob/main/Local-vLLM.md#amd-and-cpu-installation"
     fi
     ;;
 esac
@@ -590,9 +612,9 @@ echo "  localvllm start vllm"
 echo "  localvllm start omni"
 echo "  localvllm status all"
 echo
-echo "Start one backend at login:"
-echo "  systemctl --user enable ${LOCALVLLM_VLLM_SERVICE_NAME%.service}"
-echo "  systemctl --user enable ${LOCALVLLM_OMNI_SERVICE_NAME%.service}"
+echo "Start a backend at boot and keep it running after logout:"
+echo "  localvllm autostart on vllm"
+echo "  localvllm autostart on omni"
 echo
 echo "CLI command:"
 echo "  $LOCALVLLM_CLI_LINK"

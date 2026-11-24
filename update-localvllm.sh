@@ -232,7 +232,7 @@ refresh_scripts() (
   }
   # An ERR trap is suppressed when this function is tested with `if !`.
   # Explicit checks below return failure; EXIT restores the backup on failure.
-  trap 'refresh_status=$?; if [ "$refresh_status" -ne 0 ]; then restore_refresh_backup; fi' EXIT
+  trap 'refresh_status=$?; if [ "$refresh_status" -ne 0 ]; then restore_refresh_backup; fi; localvllm_operation_log_close' EXIT
 
   log "Refreshing helper scripts"
 
@@ -485,7 +485,7 @@ esac
 
 mkdir -p "$AI_DIR" "$BIN_DIR" "$LIB_DIR" "$CONF_ROOT"
 TMP_DIR="$(mktemp -d)"
-trap 'rm -rf "$TMP_DIR"' EXIT
+trap 'rm -rf "$TMP_DIR"; localvllm_operation_log_close' EXIT
 
 if [ "$VLLM_ONLY" -eq 0 ] && [ "$CHECK_ONLY" -eq 0 ]; then
   resolve_localvllm_source_dir
@@ -706,6 +706,7 @@ transaction_cleanup() {
     done
   fi
   rm -rf "$TMP_DIR"
+  localvllm_operation_log_close
   exit "$result"
 }
 mkdir -p "$TMP_DIR/transaction"
